@@ -71,6 +71,13 @@ export const env = {
   // URL pública del sitio para enlaces dentro de los emails.
   publicUrl: process.env.PUBLIC_URL || process.env.CLIENT_URL || 'http://localhost:5173',
 
+  // Envío de SMS (para verificar el número por código). Requiere un proveedor
+  // como Twilio. Sin credenciales, la verificación por SMS se OCULTA en el panel
+  // (el número se confirma al conectar WhatsApp con Meta).
+  sms: {
+    enabled: Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN),
+  },
+
   // WhatsApp Cloud API (Meta). Todo opcional: si no está configurado, el webhook
   // responde pero no envía mensajes (el producto sigue funcionando en simulador).
   //  - token:        token de acceso (permanente/sistema) para llamar a la Graph API.

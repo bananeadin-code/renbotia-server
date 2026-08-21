@@ -22,7 +22,10 @@ export const updateBusinessSchema = z.object({
  * Devuelve el negocio del usuario autenticado (ya resuelto por requireBusiness).
  */
 export const getMyBusiness = asyncHandler(async (req, res) => {
-  res.json({ success: true, data: { business: req.business, role: req.membershipRole } });
+  res.json({
+    success: true,
+    data: { business: req.business, role: req.membershipRole, smsEnabled: env.sms.enabled },
+  });
 });
 
 /**
