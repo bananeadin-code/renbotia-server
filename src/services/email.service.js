@@ -2,6 +2,7 @@ import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 import { receiptEmail } from '../emails/receipt.js';
 import { lowBalanceEmail } from '../emails/lowBalance.js';
+import { passwordResetEmail } from '../emails/passwordReset.js';
 import { User } from '../models/User.js';
 
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
@@ -88,6 +89,21 @@ export async function sendPurchaseReceipt(p) {
     return await sendEmail({ to, subject, html });
   } catch (err) {
     logger.warn(`[email] No se pudo enviar el comprobante: ${err.message}`);
+    return { ok: false, error: err.message };
+  }
+}
+
+/**
+ * Envía el correo para restablecer la contraseña. Fail-open.
+ * @param {{ to: string, customerName?: string, link: string, minutes?: number }} p
+ */
+export async function sendPasswordResetEmail(p) {
+  try {
+    if (!p.to) return { skipped: true };
+    const { subject, html } = passwordResetEmail(p);
+    return await sendEmail({ to: p.to, subject, html });
+  } catch (err) {
+    logger.warn(`[email] No se pudo enviar el correo de reset: ${err.message}`);
     return { ok: false, error: err.message };
   }
 }

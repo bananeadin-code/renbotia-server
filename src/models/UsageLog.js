@@ -18,7 +18,7 @@ const usageLogSchema = new mongoose.Schema(
     cacheReadTokens: { type: Number, default: 0 }, // servido desde caché (~0.1x)
     cacheCreationTokens: { type: Number, default: 0 }, // escrito a caché (~1.25x)
     totalTokens: { type: Number, default: 0 }, // input + caché + output (tokens lógicos)
-    source: { type: String, enum: ['simulator'], default: 'simulator' },
+    source: { type: String, enum: ['simulator', 'whatsapp'], default: 'simulator' },
     // true = consumo de DEMO/seed (no representa gasto real de la API). Las
     // llamadas reales a Claude lo dejan en false, así el panel admin puede
     // mostrar el COSTO REAL (que debe cuadrar con la consola de Anthropic).

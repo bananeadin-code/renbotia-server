@@ -3,11 +3,15 @@ import { OAuth2Client } from 'google-auth-library';
 import { User } from '../models/User.js';
 import { ApiError } from '../utils/ApiError.js';
 import { env } from '../config/env.js';
+import { sendPasswordResetEmail } from './email.service.js';
 import {
   signAccessToken,
   signRefreshToken,
   verifyRefreshToken,
+  signDeviceToken,
+  verifyDeviceToken,
 } from '../utils/jwt.js';
+import { sendOtp, verifyOtp } from './otp.service.js';
 
 /**
  * Lógica de negocio de autenticación, sin acoplarse a req/res.
@@ -27,19 +31,29 @@ export async function registerUser({ name, email, password }) {
     throw ApiError.conflict('Ya existe una cuenta con ese email');
   }
 
-  const user = new User({ name, email });
+  // La cuenta se crea SIN verificar: primero debe confirmar el código del correo.
+  const user = new User({ name, email, emailVerified: false });
   await user.setPassword(password);
   await user.save();
 
-  const tokens = issueTokens(user);
-  return { user, ...tokens };
+  const otp = await sendOtp({ user, purpose: 'verify_email' });
+  // No emitimos tokens aún: el cliente pide el código y llama a verify-email.
+  return { needsEmailVerification: true, email: user.email, ...otp };
 }
 
-export async function loginUser({ email, password }) {
+export async function loginUser({ email, password, deviceToken }) {
   // passwordHash tiene select:false → hay que pedirlo explícitamente
-  const user = await User.findOne({ email }).select('+passwordHash');
+  const user = await User.findOne({ email }).select('+passwordHash +googleId');
   if (!user) {
     throw ApiError.unauthorized('Credenciales inválidas');
+  }
+
+  // Cuentas creadas con Google no tienen contraseña: guiamos en vez de
+  // reventar bcrypt con "Illegal arguments: string, undefined".
+  if (!user.passwordHash) {
+    throw ApiError.badRequest(
+      'Esta cuenta se creó con Google. Entra con el botón "Continuar con Google".'
+    );
   }
 
   const ok = await user.comparePassword(password);
@@ -47,8 +61,69 @@ export async function loginUser({ email, password }) {
     throw ApiError.unauthorized('Credenciales inválidas');
   }
 
+  // Correo sin verificar: primero confirmar el email (reenvía código).
+  if (!user.emailVerified) {
+    const otp = await sendOtp({ user, purpose: 'verify_email' });
+    return { needsEmailVerification: true, email: user.email, ...otp };
+  }
+
+  // 2FA por email, salvo dispositivo recordado (cookie firmada de 60 días).
+  if (user.twoFactorEnabled && !isDeviceRemembered(deviceToken, user._id)) {
+    const otp = await sendOtp({ user, purpose: 'login_2fa' });
+    return { needs2fa: true, email: user.email, ...otp };
+  }
+
   const tokens = issueTokens(user);
   return { user, ...tokens };
+}
+
+/** ¿El token de dispositivo es válido y pertenece a este usuario? */
+function isDeviceRemembered(deviceToken, userId) {
+  if (!deviceToken) return false;
+  try {
+    const payload = verifyDeviceToken(deviceToken);
+    return String(payload.sub) === String(userId);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Confirma el correo con el código y deja la cuenta activa (e inicia sesión).
+ */
+export async function verifyEmailAndLogin({ email, code }) {
+  const user = await User.findOne({ email });
+  if (!user) throw ApiError.badRequest('No encontramos esa cuenta.');
+  await verifyOtp({ userId: user._id, purpose: 'verify_email', code });
+  if (!user.emailVerified) {
+    user.emailVerified = true;
+    await user.save();
+  }
+  const tokens = issueTokens(user);
+  return { user, ...tokens };
+}
+
+/**
+ * Verifica el 2FA del login y emite sesión. Si rememberDevice, devuelve además
+ * un deviceToken para que el controlador lo fije como cookie (salta 2FA 60 días).
+ */
+export async function verify2faAndLogin({ email, code, rememberDevice }) {
+  const user = await User.findOne({ email });
+  if (!user) throw ApiError.badRequest('No encontramos esa cuenta.');
+  await verifyOtp({ userId: user._id, purpose: 'login_2fa', code });
+  const tokens = issueTokens(user);
+  const deviceToken = rememberDevice ? signDeviceToken(user._id) : null;
+  return { user, ...tokens, deviceToken };
+}
+
+/**
+ * Reenvía un código OTP. Anti-enumeración: siempre responde ok aunque el correo
+ * no exista. `purpose` distingue verificación de correo vs 2FA de login.
+ */
+export async function resendOtpCode({ email, purpose }) {
+  const user = await User.findOne({ email });
+  if (!user) return { sent: true }; // no revelamos si existe
+  return sendOtp({ user, purpose });
 }
 
 /* ─── Inicio de sesión con Google (verificación del ID token) ──────────────── */
@@ -88,13 +163,21 @@ export async function googleAuth(credential) {
   if (!user) {
     user = await User.findOne({ email }).select('+googleId');
     if (user) {
-      // Ya existía con email/contraseña: vinculamos su cuenta de Google.
+      // Ya existía con email/contraseña: vinculamos su cuenta de Google. Su correo
+      // queda verificado (Google ya lo confirmó).
+      let changed = false;
       if (!user.googleId) {
         user.googleId = googleId;
-        await user.save();
+        changed = true;
       }
+      if (!user.emailVerified) {
+        user.emailVerified = true;
+        changed = true;
+      }
+      if (changed) await user.save();
     } else {
-      user = new User({ name, email, googleId });
+      // Cuenta nueva por Google: verificada de origen y sin 2FA (Google autentica).
+      user = new User({ name, email, googleId, emailVerified: true });
       await user.save();
     }
   }
@@ -132,8 +215,13 @@ export async function requestPasswordReset(email) {
   user.resetTokenExpiry = new Date(Date.now() + 30 * 60 * 1000); // 30 min
   await user.save();
 
-  // En el MVP devolvemos el token para poder completar el flujo sin email real.
-  return { resetToken: rawToken, simulated: true };
+  // Enviar el correo con el enlace a la página de restablecimiento (fail-open:
+  // si Resend no está configurado, se registra y no rompe el flujo).
+  const link = `${env.publicUrl.replace(/\/$/, '')}/restablecer?token=${rawToken}`;
+  await sendPasswordResetEmail({ to: user.email, customerName: user.name, link, minutes: 30 });
+
+  // En desarrollo devolvemos también el token para probar sin correo real.
+  return { resetToken: rawToken, simulated: false };
 }
 
 export async function resetPassword({ token, password }) {

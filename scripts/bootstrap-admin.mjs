@@ -54,12 +54,20 @@ async function main() {
   let user = await User.findOne({ email });
   if (user) {
     user.role = ROLES.ADMIN;
+    user.emailVerified = true;
+    user.twoFactorEnabled = false; // admin entra con contraseña sin depender de Resend
     await user.setPassword(passwordArg);
     if (nameArg) user.name = name;
     await user.save();
     console.log(`✓ Usuario existente promovido a ADMIN y contraseña actualizada: ${email}`);
   } else {
-    user = new User({ name, email, role: ROLES.ADMIN });
+    user = new User({
+      name,
+      email,
+      role: ROLES.ADMIN,
+      emailVerified: true,
+      twoFactorEnabled: false,
+    });
     await user.setPassword(passwordArg);
     await user.save();
     console.log(`✓ Admin creado: ${email}`);

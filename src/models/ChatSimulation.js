@@ -31,6 +31,12 @@ const chatSimulationSchema = new mongoose.Schema(
       index: true,
     },
     title: { type: String, default: 'Nueva conversación' },
+    // Canal de origen: 'simulator' (pruebas del panel) o 'whatsapp' (cliente real
+    // vía Meta Cloud API). Sirve para separar pruebas de conversaciones reales.
+    channel: { type: String, enum: ['simulator', 'whatsapp'], default: 'simulator' },
+    // Datos del cliente real de WhatsApp (vacíos en el simulador).
+    customerPhone: { type: String, default: '' }, // wa_id (solo dígitos, ej. 5216181234567)
+    customerName: { type: String, default: '' },
     messages: { type: [messageSchema], default: [] },
     // Relevo humano: 'bot' = el bot responde automáticamente; 'manual' = una
     // persona tomó el control y el bot no responde en esta conversación.
@@ -41,5 +47,8 @@ const chatSimulationSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+// Ubicar rápido la conversación abierta de un cliente de WhatsApp por su teléfono.
+chatSimulationSchema.index({ business: 1, channel: 1, customerPhone: 1 });
 
 export const ChatSimulation = mongoose.model('ChatSimulation', chatSimulationSchema);

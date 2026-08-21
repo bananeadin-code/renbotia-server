@@ -6,7 +6,11 @@ import * as business from '../controllers/business.controller.js';
 
 const router = Router();
 
-// Todas requieren usuario autenticado + negocio propio (aislamiento tenant)
+// Lista de proyectos accesibles (propio + colaboración) para el switcher. Solo
+// requiere auth: NO requireBusiness (no depende del negocio activo).
+router.get('/projects', requireAuth, business.listMyProjects);
+
+// El resto requiere usuario autenticado + negocio activo (aislamiento tenant)
 router.use(requireAuth, requireBusiness);
 
 router.get('/me', business.getMyBusiness);

@@ -17,18 +17,44 @@ import { ROLES } from '../config/constants.js';
  * - Sin negocio: 404 NO_BUSINESS para que el frontend mande al onboarding.
  */
 export const requireBusiness = asyncHandler(async (req, res, next) => {
-  let business = await Business.findOne({ owner: req.userId });
-  let role = null;
+  // Proyecto activo elegido por el cliente (switcher). Opcional; si viene, SIEMPRE
+  // se valida que el usuario tenga acceso a ese negocio antes de usarlo.
+  const desiredId = req.get('x-business-id') || null;
 
-  if (business) {
-    role = 'owner';
-    // Backfill: negocios previos al multiusuario no tienen Membership 'owner'.
+  const owned = await Business.findOne({ owner: req.userId });
+  // Backfill: negocios previos al multiusuario no tienen Membership 'owner'.
+  if (owned) {
     await Membership.updateOne(
-      { business: business._id, user: req.userId },
+      { business: owned._id, user: req.userId },
       { $setOnInsert: { role: 'owner' } },
       { upsert: true }
     );
+  }
+
+  let business = null;
+  let role = null;
+
+  if (desiredId) {
+    // Selección explícita: validar acceso (dueño o colaborador de ESE negocio).
+    if (owned && String(owned._id) === String(desiredId)) {
+      business = owned;
+      role = 'owner';
+    } else {
+      const membership = await Membership.findOne({ user: req.userId, business: desiredId });
+      if (membership) {
+        business = await Business.findById(desiredId);
+        role = membership.role;
+      }
+    }
+    if (!business) {
+      throw new ApiError(403, 'No tienes acceso a este proyecto', { code: 'NO_ACCESS' });
+    }
+  } else if (owned) {
+    // Sin selección: por defecto el negocio propio.
+    business = owned;
+    role = 'owner';
   } else {
+    // Sin negocio propio: la primera colaboración.
     const membership = await Membership.findOne({ user: req.userId }).sort({ createdAt: 1 });
     if (membership) {
       business = await Business.findById(membership.business);

@@ -34,9 +34,15 @@ const userSchema = new mongoose.Schema(
       enum: Object.values(ROLES),
       default: ROLES.CLIENTE,
     },
-    // Flujo de recuperación de contraseña (simulado: no se envía email real)
+    // Flujo de recuperación de contraseña
     resetToken: { type: String, select: false },
     resetTokenExpiry: { type: Date, select: false },
+    // Verificación de correo: las cuentas con contraseña deben confirmar un código
+    // enviado al email antes de activarse. Las de Google llegan ya verificadas.
+    emailVerified: { type: Boolean, default: false },
+    // 2FA por email al iniciar sesión (solo cuentas con contraseña). Activo por
+    // defecto; el usuario podrá desactivarlo desde su perfil más adelante.
+    twoFactorEnabled: { type: Boolean, default: true },
   },
   { timestamps: true }
 );

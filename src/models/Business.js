@@ -46,6 +46,21 @@ const businessSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    // ── WhatsApp Cloud API (Meta) ──
+    // Id del número en Meta (metadata.phone_number_id). Es la LLAVE con la que el
+    // webhook enruta cada mensaje entrante al negocio correcto. Un id pertenece a
+    // un solo negocio (índice parcial único más abajo).
+    whatsappPhoneNumberId: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+    // Id de la WhatsApp Business Account (WABA) dueña del número. Informativo.
+    whatsappWabaId: {
+      type: String,
+      trim: true,
+      default: '',
+    },
     status: {
       type: String,
       enum: Object.values(BUSINESS_STATUS),
@@ -61,6 +76,13 @@ const businessSchema = new mongoose.Schema(
 businessSchema.index(
   { whatsappNumber: 1 },
   { unique: true, partialFilterExpression: { whatsappVerified: true } }
+);
+
+// Un phone_number_id de Meta pertenece a un único negocio. El índice parcial solo
+// aplica a ids no vacíos, así los negocios sin conectar no colisionan entre sí.
+businessSchema.index(
+  { whatsappPhoneNumberId: 1 },
+  { unique: true, partialFilterExpression: { whatsappPhoneNumberId: { $type: 'string', $gt: '' } } }
 );
 
 export const Business = mongoose.model('Business', businessSchema);

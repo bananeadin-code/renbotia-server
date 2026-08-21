@@ -2,7 +2,9 @@ import { z } from 'zod';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiError } from '../utils/ApiError.js';
 import { ChatSimulation } from '../models/ChatSimulation.js';
+import { Business } from '../models/Business.js';
 import { logAudit } from '../services/audit.service.js';
+import { sendText } from '../services/whatsapp.service.js';
 
 /**
  * Bandeja de Conversaciones: gestión de la actividad de chat del bot, con modo
@@ -99,6 +101,17 @@ export const replyAsAgent = asyncHandler(async (req, res) => {
   chat.handoffMode = 'manual'; // responder como humano implica tomar el control
   chat.needsAttention = false;
   await chat.save();
+
+  // Si es una conversación real de WhatsApp, el mensaje del agente sale al cliente
+  // por la Cloud API (best-effort; no bloquea la respuesta HTTP).
+  if (chat.channel === 'whatsapp' && chat.customerPhone) {
+    const biz = await Business.findById(req.businessId).select('whatsappPhoneNumberId');
+    void sendText({
+      phoneNumberId: biz?.whatsappPhoneNumberId,
+      to: chat.customerPhone,
+      text: req.body.message.trim(),
+    });
+  }
 
   res.json({ success: true, data: { conversation: chat } });
 });

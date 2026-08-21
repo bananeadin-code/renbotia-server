@@ -6,6 +6,7 @@ import { env } from './config/env.js';
 import { apiLimiter } from './middleware/rateLimit.middleware.js';
 import { notFoundHandler, errorHandler } from './middleware/error.middleware.js';
 import apiRoutes from './routes/index.js';
+import webhookRoutes from './routes/webhook.routes.js';
 
 /**
  * Construye la aplicación Express con todos sus middlewares y rutas.
@@ -27,9 +28,21 @@ export function createApp() {
 
   // Límite amplio: el entrenamiento del bot (Elite) puede incluir hasta 15
   // imágenes embebidas como data URI comprimido dentro del JSON.
-  app.use(express.json({ limit: '12mb' }));
+  // Guardamos el body crudo para poder verificar la firma HMAC del webhook de
+  // WhatsApp (Meta firma el payload con el App Secret sobre los bytes exactos).
+  app.use(
+    express.json({
+      limit: '12mb',
+      verify: (req, _res, buf) => {
+        req.rawBody = buf;
+      },
+    })
+  );
   app.use(express.urlencoded({ extended: true, limit: '12mb' }));
   app.use(cookieParser());
+
+  // Webhook de WhatsApp (Meta llama directo): fuera de /api y de su rate-limit.
+  app.use('/webhooks/whatsapp', webhookRoutes);
 
   // Rate limit general para toda la API
   app.use('/api', apiLimiter);

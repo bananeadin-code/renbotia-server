@@ -14,7 +14,9 @@ const faqSchema = z.object({
 
 export const onboardingSchema = z.object({
   business: z.object({
-    name: z.string().min(2, 'El nombre del negocio es obligatorio'),
+    // Opcional: el usuario puede omitir los datos del negocio en el onboarding y
+    // completarlos después en el panel (provisionBusiness usa "Mi negocio" si viene vacío).
+    name: z.string().max(80).optional().default(''),
     industry: z.enum(['legal', 'contable', 'consultoria', 'agencia', 'otro']).default('otro'),
     industryOther: z.string().max(60).optional().default(''),
     whatsappNumber: z.string().max(30).optional().default(''),

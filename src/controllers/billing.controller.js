@@ -137,7 +137,8 @@ export const createIntent = asyncHandler(async (req, res) => {
 const onboardingPayload = z
   .object({
     business: z.object({
-      name: z.string().min(2),
+      // Opcional: datos del negocio se pueden completar luego en el panel.
+      name: z.string().max(80).optional().default(''),
       industry: z.enum(['legal', 'contable', 'consultoria', 'agencia', 'otro']).optional(),
       industryOther: z.string().max(60).optional(),
       whatsappNumber: z.string().max(30).optional(),

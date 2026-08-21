@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiError } from '../utils/ApiError.js';
 import { Business } from '../models/Business.js';
+import { Membership } from '../models/Membership.js';
 import { PhoneVerification } from '../models/PhoneVerification.js';
 import { AuditLog } from '../models/AuditLog.js';
 import { normalizePhone, isMexican } from '../utils/phone.js';
@@ -192,4 +193,32 @@ export const verifyWhatsapp = asyncHandler(async (req, res) => {
     }
     throw err;
   }
+});
+
+/**
+ * GET /api/business/projects — lista los proyectos a los que el usuario tiene
+ * acceso: su negocio propio (owner) y aquel en el que colabora. Máximo 2. Solo
+ * requiere auth (NO requireBusiness), porque alimenta el switcher de proyectos.
+ */
+export const listMyProjects = asyncHandler(async (req, res) => {
+  const owned = await Business.findOne({ owner: req.userId }).select('name').lean();
+  const collabs = await Membership.find({ user: req.userId, role: 'colaborador' })
+    .populate('business', 'name')
+    .lean();
+
+  const projects = [];
+  if (owned) {
+    projects.push({ id: String(owned._id), name: owned.name || 'Mi negocio', role: 'owner' });
+  }
+  for (const m of collabs) {
+    if (m.business) {
+      projects.push({
+        id: String(m.business._id),
+        name: m.business.name || 'Proyecto',
+        role: 'colaborador',
+      });
+    }
+  }
+
+  res.json({ success: true, data: { projects } });
 });

@@ -106,9 +106,18 @@ export const inviteMember = asyncHandler(async (req, res) => {
     summary: `Invitó a ${email} como colaborador.`,
   });
 
-  const data = { email: invitation.email };
+  // Informamos a la UI si la persona YA tiene cuenta (para el mensaje correcto:
+  // "le enviamos el enlace" vs "debe crear una cuenta con este correo").
+  const registered = Boolean(existingUser);
+  const data = { email: invitation.email, registered };
   if (!isProd) data.devLink = link; // en dev, para probar sin correo real
-  res.status(201).json({ success: true, message: 'Invitación enviada.', data });
+  res.status(201).json({
+    success: true,
+    message: registered
+      ? 'Invitación enviada. La persona ya tiene cuenta; abrirá el enlace para unirse.'
+      : 'Invitación enviada. La persona debe crear una cuenta con ese correo y luego abrir el enlace.',
+    data,
+  });
 });
 
 export const acceptSchema = z.object({ token: z.string().min(10) });
@@ -128,6 +137,24 @@ export const acceptInvitation = asyncHandler(async (req, res) => {
   const user = await User.findById(req.userId).select('email name');
   if (user?.email?.toLowerCase() !== invitation.email.toLowerCase()) {
     throw ApiError.forbidden('Esta invitación es para otro correo. Inicia sesión con el correo invitado.');
+  }
+
+  // Tope de proyectos: además del propio, se puede colaborar en UNO más (máx. 2).
+  const alreadyMember = await Membership.findOne({
+    business: invitation.business,
+    user: req.userId,
+  });
+  if (!alreadyMember) {
+    const otherCollab = await Membership.findOne({
+      user: req.userId,
+      role: 'colaborador',
+      business: { $ne: invitation.business },
+    });
+    if (otherCollab) {
+      throw ApiError.badRequest(
+        'Solo puedes colaborar en un proyecto además del tuyo. Sal del otro para unirte a este.'
+      );
+    }
   }
 
   await Membership.updateOne(

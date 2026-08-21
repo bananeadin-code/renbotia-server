@@ -149,7 +149,13 @@ async function run() {
   logger.info(`Planes creados: ${plans.map((p) => p.key).join(', ')}`);
 
   // Admin
-  const admin = new User({ name: 'Admin', email: 'admin@demo.com', role: ROLES.ADMIN });
+  const admin = new User({
+    name: 'Admin',
+    email: 'admin@demo.com',
+    role: ROLES.ADMIN,
+    emailVerified: true,
+    twoFactorEnabled: false, // demo local sin fricción de código
+  });
   await admin.setPassword(DEMO_PASSWORD);
   await admin.save();
   logger.info('Usuario admin creado: admin@demo.com');
@@ -184,7 +190,13 @@ async function run() {
 
   // Negocios demo
   for (const demo of DEMO_BUSINESSES) {
-    const user = new User({ name: demo.userName, email: demo.email, role: ROLES.CLIENTE });
+    const user = new User({
+      name: demo.userName,
+      email: demo.email,
+      role: ROLES.CLIENTE,
+      emailVerified: true,
+      twoFactorEnabled: false, // demo local sin fricción de código
+    });
     await user.setPassword(DEMO_PASSWORD);
     await user.save();
 

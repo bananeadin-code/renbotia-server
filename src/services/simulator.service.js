@@ -28,7 +28,15 @@ const HISTORY_WINDOW = 20;
  * @param {string} [params.chatId] - conversación a continuar; si no, se crea una
  * @returns {Promise<{ reply, chatId, balance, usage }>}
  */
-export async function processMessage({ businessId, business, message, chatId }) {
+export async function processMessage({
+  businessId,
+  business,
+  message,
+  chatId,
+  channel = 'simulator',
+  customer = null, // { phone, name } cuando viene de WhatsApp real
+  source = 'simulator', // etiqueta para UsageLog ('simulator' | 'whatsapp')
+}) {
   // 1) Suscripción + reseteo perezoso + verificación de créditos
   const subscription = await Subscription.findOne({ business: businessId }).populate('plan');
   if (!subscription) {
@@ -71,7 +79,10 @@ export async function processMessage({ businessId, business, message, chatId }) 
   } else {
     chat = new ChatSimulation({
       business: businessId,
-      title: message.slice(0, 40) || 'Nueva conversación',
+      title: customer?.name || message.slice(0, 40) || 'Nueva conversación',
+      channel,
+      customerPhone: customer?.phone || '',
+      customerName: customer?.name || '',
       messages: [],
     });
   }
@@ -230,7 +241,7 @@ export async function processMessage({ businessId, business, message, chatId }) 
     cacheReadTokens,
     cacheCreationTokens,
     totalTokens,
-    source: 'simulator',
+    source,
   });
 
   return {

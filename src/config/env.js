@@ -70,6 +70,21 @@ export const env = {
 
   // URL pública del sitio para enlaces dentro de los emails.
   publicUrl: process.env.PUBLIC_URL || process.env.CLIENT_URL || 'http://localhost:5173',
+
+  // WhatsApp Cloud API (Meta). Todo opcional: si no está configurado, el webhook
+  // responde pero no envía mensajes (el producto sigue funcionando en simulador).
+  //  - token:        token de acceso (permanente/sistema) para llamar a la Graph API.
+  //  - verifyToken:  cadena que TÚ inventas; Meta la usa para verificar el webhook (GET).
+  //  - appSecret:    "App Secret" de tu app de Meta; valida la firma HMAC del webhook.
+  //  - apiVersion:   versión de la Graph API (p. ej. v21.0).
+  //  - phoneNumberId: id del número por defecto (opcional; cada negocio puede tener el suyo).
+  whatsapp: {
+    token: process.env.WHATSAPP_TOKEN || '',
+    verifyToken: process.env.WHATSAPP_VERIFY_TOKEN || '',
+    appSecret: process.env.WHATSAPP_APP_SECRET || '',
+    apiVersion: process.env.WHATSAPP_API_VERSION || 'v21.0',
+    phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
+  },
 };
 
 export const isProd = env.nodeEnv === 'production';
