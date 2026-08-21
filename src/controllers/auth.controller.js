@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import * as authService from '../services/auth.service.js';
+import { User } from '../models/User.js';
 import { env, isProd } from '../config/env.js';
 
 /**
@@ -135,6 +136,18 @@ export const logout = asyncHandler(async (req, res) => {
 
 export const me = asyncHandler(async (req, res) => {
   res.json({ success: true, data: { user: req.user } });
+});
+
+export const twoFactorSchema = z.object({ enabled: z.boolean() });
+
+/** PATCH /api/auth/2fa — activa/desactiva el 2FA por correo del usuario. */
+export const updateTwoFactor = asyncHandler(async (req, res) => {
+  const user = await User.findByIdAndUpdate(
+    req.userId,
+    { $set: { twoFactorEnabled: req.body.enabled } },
+    { new: true }
+  );
+  res.json({ success: true, data: { user } });
 });
 
 export const forgotPassword = asyncHandler(async (req, res) => {

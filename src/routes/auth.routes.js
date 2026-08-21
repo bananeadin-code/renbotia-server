@@ -23,7 +23,8 @@ router.post('/logout', auth.logout);
 router.post('/forgot-password', authLimiter, validate(auth.forgotSchema), auth.forgotPassword);
 router.post('/reset-password', authLimiter, validate(auth.resetSchema), auth.resetPassword);
 
-// Ruta protegida: datos del usuario autenticado
+// Rutas protegidas: datos del usuario autenticado + ajustes de seguridad
 router.get('/me', requireAuth, auth.me);
+router.patch('/2fa', requireAuth, validate(auth.twoFactorSchema), auth.updateTwoFactor);
 
 export default router;

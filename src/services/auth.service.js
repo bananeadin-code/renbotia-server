@@ -3,7 +3,7 @@ import { OAuth2Client } from 'google-auth-library';
 import { User } from '../models/User.js';
 import { ApiError } from '../utils/ApiError.js';
 import { env } from '../config/env.js';
-import { sendPasswordResetEmail } from './email.service.js';
+import { sendPasswordResetEmail, sendWelcomeEmail } from './email.service.js';
 import {
   signAccessToken,
   signRefreshToken,
@@ -98,6 +98,8 @@ export async function verifyEmailAndLogin({ email, code }) {
   if (!user.emailVerified) {
     user.emailVerified = true;
     await user.save();
+    // Bienvenida (cálida) al activar la cuenta. Fail-open, no bloquea el login.
+    void sendWelcomeEmail({ to: user.email, customerName: user.name });
   }
   const tokens = issueTokens(user);
   return { user, ...tokens };
@@ -179,6 +181,7 @@ export async function googleAuth(credential) {
       // Cuenta nueva por Google: verificada de origen y sin 2FA (Google autentica).
       user = new User({ name, email, googleId, emailVerified: true });
       await user.save();
+      void sendWelcomeEmail({ to: user.email, customerName: user.name });
     }
   }
 
