@@ -8,6 +8,7 @@ import {
   updateAdminConfig,
   updateSchema as siteAssistantUpdateSchema,
 } from '../controllers/siteAssistant.controller.js';
+import { listWaitlist } from '../controllers/waitlist.controller.js';
 
 const router = Router();
 
@@ -19,5 +20,8 @@ router.get('/businesses', listAllBusinesses);
 // Configuración del asistente IA del sitio (widget de soporte/guía).
 router.get('/site-assistant', getAdminConfig);
 router.put('/site-assistant', validate(siteAssistantUpdateSchema), updateAdminConfig);
+
+// Lista de espera de los planes de pago (interesados).
+router.get('/waitlist', listWaitlist);
 
 export default router;

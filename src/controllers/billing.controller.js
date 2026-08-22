@@ -426,7 +426,17 @@ export const changePlan = asyncHandler(async (req, res) => {
  * Devuelve la clave PUBLICABLE de Stripe (no secreta) para inicializar Elements.
  */
 export const getBillingConfig = asyncHandler(async (req, res) => {
-  res.json({ success: true, data: { publishableKey: env.stripe.publishableKey } });
+  // paidPlansLive: los planes de pago solo se pueden COMPRAR con claves live de
+  // Stripe. Se detecta solo por el prefijo sk_live_ → al poner las claves de
+  // producción se activa automáticamente (sin tocar código). Mientras, el sitio
+  // muestra Pro/Elite como "Próximamente" con lista de espera.
+  res.json({
+    success: true,
+    data: {
+      publishableKey: env.stripe.publishableKey,
+      paidPlansLive: String(env.stripe.secretKey || '').startsWith('sk_live_'),
+    },
+  });
 });
 
 /**
