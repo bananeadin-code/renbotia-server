@@ -138,6 +138,20 @@ export const me = asyncHandler(async (req, res) => {
   res.json({ success: true, data: { user: req.user } });
 });
 
+export const updateProfileSchema = z.object({
+  name: z.string().min(2, 'El nombre debe tener al menos 2 caracteres').max(80),
+});
+
+/** PATCH /api/auth/profile — actualiza los datos personales del usuario (nombre). */
+export const updateProfile = asyncHandler(async (req, res) => {
+  const user = await User.findByIdAndUpdate(
+    req.userId,
+    { $set: { name: req.body.name.trim() } },
+    { new: true }
+  );
+  res.json({ success: true, data: { user } });
+});
+
 export const twoFactorSchema = z.object({ enabled: z.boolean() });
 
 /** PATCH /api/auth/2fa — activa/desactiva el 2FA por correo del usuario. */

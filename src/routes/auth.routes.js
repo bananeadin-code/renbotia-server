@@ -25,6 +25,7 @@ router.post('/reset-password', authLimiter, validate(auth.resetSchema), auth.res
 
 // Rutas protegidas: datos del usuario autenticado + ajustes de seguridad
 router.get('/me', requireAuth, auth.me);
+router.patch('/profile', requireAuth, validate(auth.updateProfileSchema), auth.updateProfile);
 router.patch('/2fa', requireAuth, validate(auth.twoFactorSchema), auth.updateTwoFactor);
 
 export default router;
