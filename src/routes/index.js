@@ -13,6 +13,7 @@ import billingRoutes from './billing.routes.js';
 import managementRoutes from './management.routes.js';
 import adminRoutes from './admin.routes.js';
 import demoRoutes from './demo.routes.js';
+import siteAssistantRoutes from './siteAssistant.routes.js';
 import memberRoutes from './members.routes.js';
 import conversationRoutes from './conversations.routes.js';
 
@@ -46,6 +47,7 @@ router.use('/usage', usageRoutes);
 router.use('/chats', chatRoutes);
 router.use('/simulator', simulatorRoutes);
 router.use('/demo', demoRoutes); // público (sin auth): demo de la landing
+router.use('/site-assistant', siteAssistantRoutes); // público: asistente del sitio (widget)
 router.use('/billing', billingRoutes);
 router.use('/management', managementRoutes);
 router.use('/conversations', conversationRoutes);

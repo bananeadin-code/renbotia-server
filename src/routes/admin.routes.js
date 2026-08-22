@@ -1,7 +1,13 @@
 import { Router } from 'express';
 import { requireAuth } from '../middleware/auth.middleware.js';
 import { requireAdmin } from '../middleware/role.middleware.js';
+import { validate } from '../middleware/validate.middleware.js';
 import { listAllBusinesses } from '../controllers/admin.controller.js';
+import {
+  getAdminConfig,
+  updateAdminConfig,
+  updateSchema as siteAssistantUpdateSchema,
+} from '../controllers/siteAssistant.controller.js';
 
 const router = Router();
 
@@ -9,5 +15,9 @@ const router = Router();
 router.use(requireAuth, requireAdmin);
 
 router.get('/businesses', listAllBusinesses);
+
+// Configuración del asistente IA del sitio (widget de soporte/guía).
+router.get('/site-assistant', getAdminConfig);
+router.put('/site-assistant', validate(siteAssistantUpdateSchema), updateAdminConfig);
 
 export default router;
