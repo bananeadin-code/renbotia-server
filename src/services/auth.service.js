@@ -4,6 +4,7 @@ import { User } from '../models/User.js';
 import { ApiError } from '../utils/ApiError.js';
 import { env } from '../config/env.js';
 import { sendPasswordResetEmail, sendWelcomeEmail } from './email.service.js';
+import { isDisposableEmail } from '../utils/disposableEmails.js';
 import {
   signAccessToken,
   signRefreshToken,
@@ -26,6 +27,13 @@ function issueTokens(user) {
 }
 
 export async function registerUser({ name, email, password }) {
+  // Bloqueo de correos desechables/temporales (anti-abuso de cuentas Free).
+  if (isDisposableEmail(email)) {
+    throw ApiError.badRequest(
+      'Usa un correo permanente para crear tu cuenta (no se permiten correos temporales o desechables).'
+    );
+  }
+
   const exists = await User.findOne({ email });
   if (exists) {
     throw ApiError.conflict('Ya existe una cuenta con ese email');
