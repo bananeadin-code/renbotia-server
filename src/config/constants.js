@@ -55,10 +55,12 @@ export const PLANS = [
  * El backend sanea la BotConfig contra estos límites (fuente de verdad) y el
  * frontend los replica para mostrar/ocultar campos.
  */
+// multiChannel: conectar el bot a más de un canal (WhatsApp + Instagram + Facebook).
+// Beneficio de Pro y Elite (no Free). Listo para la Fase 2 multicanal.
 export const PLAN_LIMITS = {
-  free: { maxFaqs: 2, personality: false, tone: false, extraContext: false, maxImages: 0, management: false, multiUser: false },
-  pro: { maxFaqs: 10, personality: true, tone: true, extraContext: true, maxImages: 0, management: false, multiUser: true },
-  elite: { maxFaqs: null, personality: true, tone: true, extraContext: true, maxImages: 15, management: true, multiUser: true },
+  free: { maxFaqs: 2, personality: false, tone: false, extraContext: false, maxImages: 0, management: false, multiUser: false, multiChannel: false },
+  pro: { maxFaqs: 10, personality: true, tone: true, extraContext: true, maxImages: 0, management: false, multiUser: true, multiChannel: true },
+  elite: { maxFaqs: null, personality: true, tone: true, extraContext: true, maxImages: 15, management: true, multiUser: true, multiChannel: true },
 };
 
 /**

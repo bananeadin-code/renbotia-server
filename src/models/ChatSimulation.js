@@ -31,11 +31,19 @@ const chatSimulationSchema = new mongoose.Schema(
       index: true,
     },
     title: { type: String, default: 'Nueva conversación' },
-    // Canal de origen: 'simulator' (pruebas del panel) o 'whatsapp' (cliente real
-    // vía Meta Cloud API). Sirve para separar pruebas de conversaciones reales.
-    channel: { type: String, enum: ['simulator', 'whatsapp'], default: 'simulator' },
-    // Datos del cliente real de WhatsApp (vacíos en el simulador).
-    customerPhone: { type: String, default: '' }, // wa_id (solo dígitos, ej. 5216181234567)
+    // Canal de origen. 'simulator' (pruebas del panel) y 'whatsapp' (Cloud API) son
+    // los activos hoy; 'instagram' y 'facebook' quedan listos para la Fase 2
+    // multicanal (misma infra de Meta Graph API → solo se agrega su adaptador).
+    channel: {
+      type: String,
+      enum: ['simulator', 'whatsapp', 'instagram', 'facebook'],
+      default: 'simulator',
+    },
+    // Datos del cliente real (vacíos en el simulador).
+    customerPhone: { type: String, default: '' }, // wa_id de WhatsApp (dígitos)
+    // Identificador GENÉRICO del cliente por canal (channel-agnostic): wa_id en
+    // WhatsApp, PSID/IGSID en Instagram/Messenger. Lo usa el adaptador de cada canal.
+    customerId: { type: String, default: '' },
     customerName: { type: String, default: '' },
     messages: { type: [messageSchema], default: [] },
     // Relevo humano: 'bot' = el bot responde automáticamente; 'manual' = una
