@@ -9,7 +9,9 @@ import mongoose from 'mongoose';
 const emailOtpSchema = new mongoose.Schema(
   {
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
-    purpose: { type: String, enum: ['verify_email', 'login_2fa'], required: true },
+    purpose: { type: String, enum: ['verify_email', 'login_2fa', 'change_email'], required: true },
+    // Para 'change_email': correo NUEVO a confirmar (el código se envía ahí).
+    pendingEmail: { type: String, default: '' },
     codeHash: { type: String, required: true },
     attempts: { type: Number, default: 0 },
     expiresAt: { type: Date, required: true },

@@ -136,6 +136,43 @@ export async function resendOtpCode({ email, purpose }) {
   return sendOtp({ user, purpose });
 }
 
+/**
+ * Solicita cambiar el correo del usuario: envía un código al correo NUEVO para
+ * probar que le pertenece. No cambia nada hasta que se verifica.
+ */
+export async function requestEmailChange({ userId, newEmail }) {
+  const email = String(newEmail).trim().toLowerCase();
+  const user = await User.findById(userId);
+  if (!user) throw ApiError.unauthorized('No autenticado');
+  if (email === user.email) throw ApiError.badRequest('Ese ya es tu correo actual.');
+  if (isDisposableEmail(email)) {
+    throw ApiError.badRequest('Usa un correo permanente (no temporal o desechable).');
+  }
+  const taken = await User.findOne({ email });
+  if (taken) throw ApiError.conflict('Ya existe una cuenta con ese correo.');
+
+  const otp = await sendOtp({ user, purpose: 'change_email', to: email, pendingEmail: email });
+  return { sent: true, newEmail: email, ...otp };
+}
+
+/** Confirma el cambio de correo con el código enviado al correo nuevo. */
+export async function verifyEmailChange({ userId, code }) {
+  const user = await User.findById(userId);
+  if (!user) throw ApiError.unauthorized('No autenticado');
+
+  const { pendingEmail } = await verifyOtp({ userId, purpose: 'change_email', code });
+  if (!pendingEmail) throw ApiError.badRequest('No hay un cambio de correo pendiente.');
+
+  // Revalida que no lo hayan tomado entre la solicitud y la verificación.
+  const taken = await User.findOne({ email: pendingEmail, _id: { $ne: user._id } });
+  if (taken) throw ApiError.conflict('Ese correo acaba de ser tomado por otra cuenta.');
+
+  user.email = pendingEmail;
+  user.emailVerified = true;
+  await user.save();
+  return { user };
+}
+
 /* ─── Inicio de sesión con Google (verificación del ID token) ──────────────── */
 
 let googleClient = null;

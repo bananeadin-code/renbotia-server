@@ -107,6 +107,27 @@ export const resendCode = asyncHandler(async (req, res) => {
   res.json({ success: true, data: result });
 });
 
+export const requestEmailChangeSchema = z.object({ newEmail: z.string().email('Email inválido') });
+
+/** Solicita cambiar el correo: envía un código al correo NUEVO. */
+export const requestEmailChange = asyncHandler(async (req, res) => {
+  const result = await authService.requestEmailChange({
+    userId: req.userId,
+    newEmail: req.body.newEmail,
+  });
+  res.json({ success: true, data: result });
+});
+
+export const verifyEmailChangeSchema = z.object({
+  code: z.string().regex(/^\d{6}$/, 'Código de 6 dígitos.'),
+});
+
+/** Confirma el cambio de correo con el código. */
+export const verifyEmailChange = asyncHandler(async (req, res) => {
+  const { user } = await authService.verifyEmailChange({ userId: req.userId, code: req.body.code });
+  res.json({ success: true, data: { user } });
+});
+
 export const googleSchema = z.object({ credential: z.string().min(20, 'Credencial de Google inválida') });
 
 export const googleAuth = asyncHandler(async (req, res) => {

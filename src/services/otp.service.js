@@ -26,7 +26,8 @@ function hashCode(code) {
  * @param {{ user: object, purpose: 'verify_email'|'login_2fa' }} p
  * @returns {Promise<{ sent: boolean, devCode?: string }>}
  */
-export async function sendOtp({ user, purpose }) {
+export async function sendOtp({ user, purpose, to, pendingEmail = '' }) {
+  const recipient = to || user.email; // por defecto el correo del usuario
   const existing = await EmailOtp.findOne({ user: user._id, purpose });
   if (existing && Date.now() - new Date(existing.lastSentAt).getTime() < OTP_COOLDOWN_MS) {
     throw new ApiError(429, 'Espera unos segundos antes de pedir otro código.');
@@ -38,6 +39,7 @@ export async function sendOtp({ user, purpose }) {
     {
       user: user._id,
       purpose,
+      pendingEmail,
       codeHash: hashCode(code),
       attempts: 0,
       expiresAt: new Date(Date.now() + OTP_TTL_MS),
@@ -52,7 +54,7 @@ export async function sendOtp({ user, purpose }) {
     customerName: user.name,
     minutes: 10,
   });
-  await sendEmail({ to: user.email, subject, html });
+  await sendEmail({ to: recipient, subject, html });
 
   return { sent: true, ...(isProd ? {} : { devCode: code }) };
 }
@@ -81,6 +83,7 @@ export async function verifyOtp({ userId, purpose, code }) {
     throw ApiError.badRequest('Código incorrecto.');
   }
 
+  const pendingEmail = rec.pendingEmail || '';
   await rec.deleteOne();
-  return { ok: true };
+  return { ok: true, pendingEmail };
 }

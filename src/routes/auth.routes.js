@@ -27,5 +27,8 @@ router.post('/reset-password', authLimiter, validate(auth.resetSchema), auth.res
 router.get('/me', requireAuth, auth.me);
 router.patch('/profile', requireAuth, validate(auth.updateProfileSchema), auth.updateProfile);
 router.patch('/2fa', requireAuth, validate(auth.twoFactorSchema), auth.updateTwoFactor);
+// Cambio de correo con re-verificación (código al correo nuevo).
+router.post('/email/request', requireAuth, authLimiter, validate(auth.requestEmailChangeSchema), auth.requestEmailChange);
+router.post('/email/verify', requireAuth, authLimiter, validate(auth.verifyEmailChangeSchema), auth.verifyEmailChange);
 
 export default router;
