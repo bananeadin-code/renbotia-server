@@ -10,6 +10,8 @@ import {
   getStats,
 } from '../services/management.service.js';
 import { getAvailableSlots, getAvailabilityRange } from '../services/availability.service.js';
+import { ManagedRecord } from '../models/ManagedRecord.js';
+import { toCsv } from '../utils/csv.js';
 
 const RECORD_TYPES = ['cita', 'reservacion', 'pedido', 'prospecto'];
 const RECORD_STATUSES = ['pendiente', 'confirmado', 'completado', 'cancelado'];
@@ -113,4 +115,29 @@ export const availabilityHandler = asyncHandler(async (req, res) => {
 export const statsHandler = asyncHandler(async (req, res) => {
   const stats = await getStats(req.businessId);
   res.json({ success: true, data: { stats } });
+});
+
+/** GET /api/management/export — descarga los registros (leads/trabajo) en CSV. */
+export const exportRecords = asyncHandler(async (req, res) => {
+  const records = await ManagedRecord.find({ business: req.businessId })
+    .sort({ createdAt: -1 })
+    .limit(5000)
+    .lean();
+
+  const csv = toCsv(records, [
+    { label: 'Creado', get: (r) => new Date(r.createdAt).toLocaleString('es-MX') },
+    { label: 'Tipo', get: (r) => r.type },
+    { label: 'Estado', get: (r) => r.status },
+    { label: 'Cliente', get: (r) => r.customer?.name || '' },
+    { label: 'Contacto', get: (r) => r.customer?.contact || '' },
+    { label: 'Agendado', get: (r) => (r.scheduledAt ? new Date(r.scheduledAt).toLocaleString('es-MX') : '') },
+    { label: 'Cantidad', get: (r) => r.quantity ?? '' },
+    { label: 'Resumen', get: (r) => r.summary || '' },
+    { label: 'Notas', get: (r) => r.notes || '' },
+    { label: 'Origen', get: (r) => r.source || '' },
+  ]);
+
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="registros-renbotia.csv"');
+  res.send(csv);
 });

@@ -15,6 +15,7 @@ import {
   deleteRecordHandler,
   availabilityHandler,
   statsHandler,
+  exportRecords,
 } from '../controllers/management.controller.js';
 
 /**
@@ -32,6 +33,7 @@ router.put('/config', validate(updateConfigSchema), putConfig);
 router.get('/availability', availabilityHandler);
 router.get('/stats', statsHandler);
 
+router.get('/export', exportRecords);
 router.get('/records', listRecordsHandler);
 router.post('/records', validate(createRecordSchema), createRecordHandler);
 router.patch('/records/:id', validate(updateRecordSchema), updateRecordHandler);

@@ -13,6 +13,9 @@ const messageSchema = new mongoose.Schema(
       type: [{ label: String, url: String }],
       default: undefined,
     },
+    // Calificación de calidad que el dueño/agente da a una respuesta del bot
+    // ('up' buena / 'down' mala). Sirve para detectar respuestas a mejorar.
+    rating: { type: String, enum: ['up', 'down', null], default: null },
     timestamp: { type: Date, default: Date.now },
   },
   { _id: false }

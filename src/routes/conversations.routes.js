@@ -10,8 +10,10 @@ const router = Router();
 router.use(requireAuth, requireBusiness);
 
 router.get('/', conversations.listConversations);
+router.get('/export', conversations.exportConversations); // antes de /:id (no confundir con un id)
 router.get('/:id', conversations.getConversation);
 router.patch('/:id', validate(conversations.updateConversationSchema), conversations.updateConversation);
 router.post('/:id/reply', validate(conversations.replySchema), conversations.replyAsAgent);
+router.post('/:id/rate', validate(conversations.rateSchema), conversations.rateMessage);
 
 export default router;

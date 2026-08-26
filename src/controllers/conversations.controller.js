@@ -5,6 +5,7 @@ import { ChatSimulation } from '../models/ChatSimulation.js';
 import { Business } from '../models/Business.js';
 import { logAudit } from '../services/audit.service.js';
 import { sendText } from '../services/whatsapp.service.js';
+import { toCsv } from '../utils/csv.js';
 
 /**
  * Bandeja de Conversaciones: gestión de la actividad de chat del bot, con modo
@@ -113,5 +114,61 @@ export const replyAsAgent = asyncHandler(async (req, res) => {
     });
   }
 
+  res.json({ success: true, data: { conversation: chat } });
+});
+
+/** GET /api/conversations/export — descarga las conversaciones en CSV. */
+export const exportConversations = asyncHandler(async (req, res) => {
+  const chats = await ChatSimulation.find({ business: req.businessId })
+    .sort({ updatedAt: -1 })
+    .limit(5000)
+    .lean();
+
+  const rows = chats.map((c) => {
+    const last = c.messages[c.messages.length - 1];
+    return {
+      fecha: new Date(c.updatedAt).toLocaleString('es-MX'),
+      canal: c.channel || 'simulator',
+      cliente: c.customerName || c.title || '',
+      telefono: c.customerPhone || '',
+      mensajes: c.messages.length,
+      modo: c.handoffMode || 'bot',
+      atencion: c.needsAttention ? 'sí' : 'no',
+      ultimo: last ? last.content : '',
+    };
+  });
+
+  const csv = toCsv(rows, [
+    { label: 'Fecha', get: (r) => r.fecha },
+    { label: 'Canal', get: (r) => r.canal },
+    { label: 'Cliente', get: (r) => r.cliente },
+    { label: 'Teléfono', get: (r) => r.telefono },
+    { label: 'Mensajes', get: (r) => r.mensajes },
+    { label: 'Modo', get: (r) => r.modo },
+    { label: 'Requiere atención', get: (r) => r.atencion },
+    { label: 'Último mensaje', get: (r) => r.ultimo },
+  ]);
+
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="conversaciones-renbotia.csv"');
+  res.send(csv);
+});
+
+export const rateSchema = z.object({
+  index: z.number().int().min(0),
+  rating: z.enum(['up', 'down']).nullable(),
+});
+
+/** POST /api/conversations/:id/rate — califica una respuesta del bot (up/down). */
+export const rateMessage = asyncHandler(async (req, res) => {
+  const chat = await ChatSimulation.findOne({ _id: req.params.id, business: req.businessId });
+  if (!chat) throw ApiError.notFound('Conversación no encontrada');
+
+  const msg = chat.messages[req.body.index];
+  if (!msg || msg.role !== 'assistant') {
+    throw ApiError.badRequest('Solo se pueden calificar respuestas del asistente.');
+  }
+  msg.rating = req.body.rating; // 'up' | 'down' | null (para quitar la calificación)
+  await chat.save();
   res.json({ success: true, data: { conversation: chat } });
 });
