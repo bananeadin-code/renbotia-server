@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 
 import { env } from './config/env.js';
@@ -17,6 +18,17 @@ export function createApp() {
 
   // Confía en el proxy (necesario para rate-limit detrás de reverse proxy)
   app.set('trust proxy', 1);
+
+  // Cabeceras de seguridad HTTP. Este server sólo responde JSON (el HTML lo
+  // sirve Vercel, que lleva su propio CSP), así que aquí desactivamos el CSP y
+  // dejamos HSTS, nosniff, anti-clickjacking y referrer-policy. CORP en
+  // 'cross-origin' porque el cliente vive en otro dominio y consume esta API.
+  app.use(
+    helmet({
+      contentSecurityPolicy: false,
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+    })
+  );
 
   // CORS con credenciales para permitir la cookie del refresh token
   app.use(
