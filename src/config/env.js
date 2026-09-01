@@ -28,6 +28,13 @@ export const env = {
   port: Number(process.env.PORT) || 5000,
   clientUrl: process.env.CLIENT_URL || 'http://localhost:5173',
 
+  // Modo beta: aunque las llaves de Stripe sean de producción (sk_live_), los
+  // planes de pago siguen ocultos ("Próximamente") mientras BETA_MODE no sea
+  // explícitamente 'false'. Permite dejar Stripe real CONFIGURADO sin lanzar
+  // cobros todavía (p.ej. hasta que la conexión real de WhatsApp esté lista).
+  // Default: beta ENCENDIDO (a prueba de olvidos).
+  betaMode: process.env.BETA_MODE !== 'false',
+
   mongoUri: process.env.MONGODB_URI,
 
   jwt: {

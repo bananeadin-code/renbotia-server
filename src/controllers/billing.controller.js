@@ -51,6 +51,17 @@ export const createIntentSchema = z
  * (on-session); el navegador solo completa 3DS si Stripe lo pide.
  */
 export const createIntent = asyncHandler(async (req, res) => {
+  // Seguridad de beta: si hay claves LIVE pero el sitio sigue en beta, ninguna
+  // compra puede iniciarse (evita cobros reales por llamadas directas a la API
+  // saltándose la UI oculta). Con claves de prueba (sk_test_) sí se permite,
+  // para poder probar el flujo completo sin dinero real.
+  const liveKey = String(env.stripe.secretKey || '').startsWith('sk_live_');
+  if (liveKey && env.betaMode) {
+    throw new ApiError(403, 'Las compras están deshabilitadas mientras el sitio está en beta.', {
+      code: 'BETA_MODE',
+    });
+  }
+
   const { kind, useSavedCard } = req.body;
 
   let amountMXN;
@@ -426,15 +437,18 @@ export const changePlan = asyncHandler(async (req, res) => {
  * Devuelve la clave PUBLICABLE de Stripe (no secreta) para inicializar Elements.
  */
 export const getBillingConfig = asyncHandler(async (req, res) => {
-  // paidPlansLive: los planes de pago solo se pueden COMPRAR con claves live de
-  // Stripe. Se detecta solo por el prefijo sk_live_ → al poner las claves de
-  // producción se activa automáticamente (sin tocar código). Mientras, el sitio
-  // muestra Pro/Elite como "Próximamente" con lista de espera.
+  // paidPlansLive: los planes de pago solo se pueden COMPRAR cuando se cumplen
+  // DOS condiciones: (1) hay claves live de Stripe (prefijo sk_live_) y (2) el
+  // modo beta está apagado (BETA_MODE=false). Así se pueden dejar las claves de
+  // producción CONFIGURADAS sin abrir cobros todavía; el día del lanzamiento
+  // basta con poner BETA_MODE=false. Mientras, el sitio muestra Pro/Elite como
+  // "Próximamente" con lista de espera.
+  const hasLiveKey = String(env.stripe.secretKey || '').startsWith('sk_live_');
   res.json({
     success: true,
     data: {
       publishableKey: env.stripe.publishableKey,
-      paidPlansLive: String(env.stripe.secretKey || '').startsWith('sk_live_'),
+      paidPlansLive: hasLiveKey && !env.betaMode,
     },
   });
 });
