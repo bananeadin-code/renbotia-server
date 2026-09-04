@@ -54,3 +54,18 @@ export function normalizePhone(raw) {
 export function isMexican(e164) {
   return /^\+52\d{10}$/.test(e164 || '');
 }
+
+/**
+ * Normaliza un destinatario para ENVIAR por WhatsApp Cloud API (solo dígitos, sin '+').
+ * México entrega el número entrante (wa_id) con un "1" extra tras el 52
+ * (521XXXXXXXXXX); para responder hay que usarlo SIN ese 1 (52XXXXXXXXXX), o Meta
+ * rechaza el envío (#131030). Otros países se dejan igual (solo se limpian no-dígitos).
+ *
+ * @param {string} raw  wa_id o número tal como llega
+ * @returns {string} solo dígitos, listo para el campo `to` de la Cloud API
+ */
+export function toWhatsAppNumber(raw) {
+  const digits = String(raw || '').replace(/\D/g, '');
+  const mx = digits.match(/^521(\d{10})$/); // 52 + 1 + 10 dígitos (México)
+  return mx ? '52' + mx[1] : digits;
+}

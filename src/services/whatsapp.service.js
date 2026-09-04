@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
+import { toWhatsAppNumber } from '../utils/phone.js';
 
 /**
  * Integración con WhatsApp Cloud API (Meta / Graph API).
@@ -64,10 +65,13 @@ export async function sendText({ phoneNumberId, to, text }) {
     return { ok: false, error: 'not_configured' };
   }
 
+  // México entrega el wa_id con un "1" extra (521…); para responder hay que
+  // enviarlo sin ese 1 (52…) o Meta rechaza el envío. Se normaliza aquí.
+  const recipient = toWhatsAppNumber(to);
   const url = `${GRAPH}/${env.whatsapp.apiVersion}/${id}/messages`;
   const body = {
     messaging_product: 'whatsapp',
-    to,
+    to: recipient,
     type: 'text',
     text: { preview_url: false, body: text.slice(0, 4096) },
   };
