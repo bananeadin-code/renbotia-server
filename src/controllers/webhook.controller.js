@@ -3,7 +3,7 @@ import { logger } from '../utils/logger.js';
 import { Business } from '../models/Business.js';
 import { ChatSimulation } from '../models/ChatSimulation.js';
 import { processMessage } from '../services/simulator.service.js';
-import { verifySignature, sendText } from '../services/whatsapp.service.js';
+import { verifySignature, sendText, sendImage } from '../services/whatsapp.service.js';
 
 /**
  * Webhook de WhatsApp Cloud API (Meta).
@@ -132,6 +132,10 @@ async function handleMessage({ business, phoneNumberId, msg, customerName }) {
 
     if (result?.reply) {
       await sendText({ phoneNumberId, to: from, text: result.reply });
+    }
+    // Imágenes que el bot decidió enviar (Elite): tras el texto, en orden.
+    for (const image of result?.images || []) {
+      await sendImage({ phoneNumberId, to: from, image });
     }
   } catch (err) {
     // Sin créditos (402): no respondemos con un error técnico al cliente real; se

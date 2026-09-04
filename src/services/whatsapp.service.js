@@ -96,3 +96,102 @@ export async function sendText({ phoneNumberId, to, text }) {
     return { ok: false, error: err.message };
   }
 }
+
+/** Extensión de archivo tentativa a partir del tipo MIME (para el upload). */
+function extFromMime(mime) {
+  const map = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' };
+  return map[mime] || 'jpg';
+}
+
+/**
+ * Sube una imagen (data URI base64) a la Cloud API y devuelve su media id.
+ * La Graph API no acepta base64 en el mensaje: primero se sube a /{id}/media.
+ * @returns {Promise<{ ok: boolean, id?: string, error?: string }>}
+ */
+async function uploadMedia(phoneNumberId, dataUri) {
+  const m = /^data:([^;]+);base64,(.+)$/s.exec(dataUri);
+  if (!m) return { ok: false, error: 'data URI inválido' };
+  const mime = m[1];
+  const buffer = Buffer.from(m[2], 'base64');
+
+  const form = new FormData();
+  form.append('messaging_product', 'whatsapp');
+  form.append('type', mime);
+  form.append('file', new Blob([buffer], { type: mime }), `imagen.${extFromMime(mime)}`);
+
+  const url = `${GRAPH}/${env.whatsapp.apiVersion}/${phoneNumberId}/media`;
+  try {
+    // Sin 'Content-Type' manual: fetch pone el boundary del multipart.
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${env.whatsapp.token}` },
+      body: form,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.id) {
+      logger.error(`WhatsApp: fallo al subir media (${res.status}): ${JSON.stringify(data?.error || data)}`);
+      return { ok: false, error: data?.error?.message || `HTTP ${res.status}` };
+    }
+    return { ok: true, id: data.id };
+  } catch (err) {
+    logger.error(`WhatsApp: error de red al subir media: ${err.message}`);
+    return { ok: false, error: err.message };
+  }
+}
+
+/**
+ * Envía una imagen del negocio por la Cloud API.
+ * - url http(s): se manda por `link` (Meta la descarga).
+ * - data URI base64: se sube primero a /media y se manda por `id`.
+ *
+ * @param {object} p
+ * @param {string} p.phoneNumberId  id del número emisor (el del negocio)
+ * @param {string} p.to             destinatario (wa_id / E.164 sin '+')
+ * @param {{label?: string, url: string}} p.image  imagen a enviar
+ * @param {string} [p.caption]      texto opcional bajo la imagen
+ */
+export async function sendImage({ phoneNumberId, to, image, caption }) {
+  const id = phoneNumberId || env.whatsapp.phoneNumberId;
+  if (!isConfigured() || !id) {
+    logger.warn('WhatsApp: envío de imagen omitido (sin token o sin phoneNumberId).');
+    return { ok: false, error: 'not_configured' };
+  }
+  const src = image?.url?.trim();
+  if (!src) return { ok: false, error: 'imagen sin url' };
+
+  let media;
+  if (/^https?:\/\//i.test(src)) {
+    media = { link: src };
+  } else if (src.startsWith('data:')) {
+    const up = await uploadMedia(id, src);
+    if (!up.ok) return up;
+    media = { id: up.id };
+  } else {
+    return { ok: false, error: 'formato de imagen no soportado' };
+  }
+  if (caption) media.caption = caption.slice(0, 1024);
+
+  const url = `${GRAPH}/${env.whatsapp.apiVersion}/${id}/messages`;
+  const body = {
+    messaging_product: 'whatsapp',
+    to: toWhatsAppNumber(to),
+    type: 'image',
+    image: media,
+  };
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${env.whatsapp.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      logger.error(`WhatsApp: fallo al enviar imagen (${res.status}): ${JSON.stringify(data?.error || data)}`);
+      return { ok: false, error: data?.error?.message || `HTTP ${res.status}` };
+    }
+    return { ok: true, id: data?.messages?.[0]?.id };
+  } catch (err) {
+    logger.error(`WhatsApp: error de red al enviar imagen: ${err.message}`);
+    return { ok: false, error: err.message };
+  }
+}
