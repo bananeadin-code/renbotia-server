@@ -17,6 +17,7 @@ import siteAssistantRoutes from './siteAssistant.routes.js';
 import waitlistRoutes from './waitlist.routes.js';
 import memberRoutes from './members.routes.js';
 import conversationRoutes from './conversations.routes.js';
+import connectionRoutes from './connections.routes.js';
 
 /**
  * Monta todas las rutas de la API bajo /api.
@@ -53,6 +54,7 @@ router.use('/waitlist', waitlistRoutes); // público: lista de espera de planes 
 router.use('/billing', billingRoutes);
 router.use('/management', managementRoutes);
 router.use('/conversations', conversationRoutes);
+router.use('/connections', connectionRoutes);
 router.use('/members', memberRoutes);
 router.use('/admin', adminRoutes);
 

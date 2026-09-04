@@ -98,6 +98,14 @@ export const env = {
     appSecret: process.env.WHATSAPP_APP_SECRET || '',
     apiVersion: process.env.WHATSAPP_API_VERSION || 'v21.0',
     phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
+    // Embedded Signup (self-serve: cada cliente conecta SU propio WhatsApp).
+    //  - appId:    ID de la app de Meta (no secreto; el cliente lo usa en el SDK).
+    //  - configId: "configuration ID" del Facebook Login for Business.
+    //  - embeddedEnabled: gatea el módulo de Conexiones hasta que Meta apruebe el
+    //    App Review. Mientras sea false, la UI muestra "Próximamente".
+    appId: process.env.WHATSAPP_APP_ID || '',
+    configId: process.env.WHATSAPP_CONFIG_ID || '',
+    embeddedEnabled: process.env.WHATSAPP_EMBEDDED_ENABLED === 'true',
   },
 };
 
