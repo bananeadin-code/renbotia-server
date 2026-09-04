@@ -45,11 +45,6 @@ export function verifyWebhook(req, res) {
 export function receiveWebhook(req, res) {
   // 1) Seguridad: la firma debe corresponder al App Secret sobre el body crudo.
   const signature = req.get('x-hub-signature-256');
-  // [DIAG temporal] confirma que el POST llega y con qué firma/tamaño.
-  logger.info(
-    `WhatsApp DIAG: POST /webhooks/whatsapp recibido — object=${req.body?.object} ` +
-      `sig=${signature ? 'presente' : 'AUSENTE'} rawBody=${req.rawBody?.length || 0}b`
-  );
   if (!verifySignature(req.rawBody, signature)) {
     logger.warn('WhatsApp: firma de webhook inválida; se descarta.');
     return res.sendStatus(401);
@@ -69,12 +64,6 @@ async function processInbound(payload) {
   for (const entry of payload.entry || []) {
     for (const change of entry.changes || []) {
       const value = change.value || {};
-      // [DIAG temporal] qué trae este evento (messages vs statuses vs otro).
-      logger.info(
-        `WhatsApp DIAG: change field=${change.field} keys=${Object.keys(value).join('/')} ` +
-          `msgs=${(value.messages || []).length} statuses=${(value.statuses || []).length} ` +
-          `phone_number_id=${value.metadata?.phone_number_id}`
-      );
       // Ignoramos recibos de entrega/lectura (statuses) y campos que no sean mensajes.
       const messages = value.messages || [];
       if (!messages.length) continue;
