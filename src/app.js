@@ -5,6 +5,7 @@ import cookieParser from 'cookie-parser';
 
 import { env } from './config/env.js';
 import { apiLimiter } from './middleware/rateLimit.middleware.js';
+import { sanitizeMongo } from './middleware/sanitize.middleware.js';
 import { notFoundHandler, errorHandler } from './middleware/error.middleware.js';
 import apiRoutes from './routes/index.js';
 import webhookRoutes from './routes/webhook.routes.js';
@@ -55,6 +56,9 @@ export function createApp() {
 
   // Webhook de WhatsApp (Meta llama directo): fuera de /api y de su rate-limit.
   app.use('/webhooks/whatsapp', webhookRoutes);
+
+  // Saneo anti-inyección NoSQL (defensa en profundidad) antes de las rutas.
+  app.use('/api', sanitizeMongo);
 
   // Rate limit general para toda la API
   app.use('/api', apiLimiter);

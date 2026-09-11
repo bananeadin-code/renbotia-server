@@ -43,6 +43,14 @@ const userSchema = new mongoose.Schema(
     // 2FA por email al iniciar sesión (solo cuentas con contraseña). Activo por
     // defecto; el usuario podrá desactivarlo desde su perfil más adelante.
     twoFactorEnabled: { type: Boolean, default: true },
+    // Invalida TODAS las sesiones (access + refresh) al incrementarse: se sube en
+    // el restablecimiento de contraseña. Los tokens llevan `tv` y se comparan
+    // contra este valor en requireAuth y en el refresh.
+    tokenVersion: { type: Number, default: 0 },
+    // Bloqueo temporal de la cuenta tras varios intentos fallidos de login
+    // (fuerza bruta dirigida a UNA cuenta; complementa el rate-limit por IP).
+    failedLoginAttempts: { type: Number, default: 0 },
+    lockUntil: { type: Date },
   },
   { timestamps: true }
 );
@@ -69,6 +77,9 @@ userSchema.methods.toJSON = function toJSON() {
   delete obj.googleId;
   delete obj.resetToken;
   delete obj.resetTokenExpiry;
+  delete obj.tokenVersion;
+  delete obj.failedLoginAttempts;
+  delete obj.lockUntil;
   delete obj.__v;
   return obj;
 };

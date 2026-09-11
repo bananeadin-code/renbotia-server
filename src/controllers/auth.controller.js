@@ -78,7 +78,7 @@ export const register = asyncHandler(async (req, res) => {
 
 export const login = asyncHandler(async (req, res) => {
   const deviceToken = req.cookies?.deviceToken;
-  const result = await authService.loginUser({ ...req.body, deviceToken });
+  const result = await authService.loginUser({ ...req.body, deviceToken, ip: req.ip });
   // Estados intermedios: falta verificar correo o falta el 2FA. Sin sesión aún.
   if (result.needsEmailVerification || result.needs2fa) {
     return res.json({ success: true, data: result });

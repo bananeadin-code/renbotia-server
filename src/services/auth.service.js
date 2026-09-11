@@ -13,13 +13,18 @@ import {
   verifyDeviceToken,
 } from '../utils/jwt.js';
 import { sendOtp, verifyOtp } from './otp.service.js';
+import { logger } from '../utils/logger.js';
 
 /**
  * Lógica de negocio de autenticación, sin acoplarse a req/res.
  */
 
+// Bloqueo de cuenta: tras N fallos seguidos, se bloquea M minutos.
+const MAX_LOGIN_ATTEMPTS = 8;
+const LOCK_MINUTES = 15;
+
 function issueTokens(user) {
-  const payload = { sub: user.id, role: user.role };
+  const payload = { sub: user.id, role: user.role, tv: user.tokenVersion ?? 0 };
   return {
     accessToken: signAccessToken(payload),
     refreshToken: signRefreshToken(payload),
@@ -49,7 +54,7 @@ export async function registerUser({ name, email, password }) {
   return { needsEmailVerification: true, email: user.email, ...otp };
 }
 
-export async function loginUser({ email, password, deviceToken }) {
+export async function loginUser({ email, password, deviceToken, ip }) {
   // passwordHash tiene select:false → hay que pedirlo explícitamente
   const user = await User.findOne({ email }).select('+passwordHash +googleId');
   if (!user) {
@@ -64,9 +69,34 @@ export async function loginUser({ email, password, deviceToken }) {
     );
   }
 
+  // Bloqueo temporal por intentos fallidos (por cuenta, complementa el rate-limit por IP).
+  if (user.lockUntil && user.lockUntil > new Date()) {
+    logger.warn(`Auth: login rechazado, cuenta bloqueada — ${email} ip=${ip || '?'}`);
+    throw new ApiError(
+      429,
+      'Cuenta bloqueada temporalmente por varios intentos fallidos. Intenta de nuevo en unos minutos.',
+      { code: 'ACCOUNT_LOCKED' }
+    );
+  }
+
   const ok = await user.comparePassword(password);
   if (!ok) {
+    user.failedLoginAttempts = (user.failedLoginAttempts || 0) + 1;
+    if (user.failedLoginAttempts >= MAX_LOGIN_ATTEMPTS) {
+      user.lockUntil = new Date(Date.now() + LOCK_MINUTES * 60 * 1000);
+      logger.warn(`Auth: cuenta BLOQUEADA por ${MAX_LOGIN_ATTEMPTS} intentos — ${email} ip=${ip || '?'}`);
+    } else {
+      logger.warn(`Auth: login fallido (${user.failedLoginAttempts}/${MAX_LOGIN_ATTEMPTS}) — ${email} ip=${ip || '?'}`);
+    }
+    await user.save();
     throw ApiError.unauthorized('Credenciales inválidas');
+  }
+
+  // Éxito: limpia contador/bloqueo si venía con fallos.
+  if (user.failedLoginAttempts > 0 || user.lockUntil) {
+    user.failedLoginAttempts = 0;
+    user.lockUntil = undefined;
+    await user.save();
   }
 
   // Correo sin verificar: primero confirmar el email (reenvía código).
@@ -243,6 +273,11 @@ export async function refreshTokens(refreshToken) {
   if (!user) {
     throw ApiError.unauthorized('El usuario ya no existe');
   }
+  // Si el tokenVersion no coincide, el refresh es anterior a un cambio de
+  // contraseña → ya no vale (sesión invalidada).
+  if ((payload.tv ?? 0) !== (user.tokenVersion ?? 0)) {
+    throw ApiError.unauthorized('Sesión expirada, inicia sesión de nuevo');
+  }
 
   return issueTokens(user);
 }
@@ -286,7 +321,13 @@ export async function resetPassword({ token, password }) {
   await user.setPassword(password);
   user.resetToken = undefined;
   user.resetTokenExpiry = undefined;
+  // Invalida TODAS las sesiones existentes (recuperación ante robo de cuenta) y
+  // limpia cualquier bloqueo por intentos.
+  user.tokenVersion = (user.tokenVersion || 0) + 1;
+  user.failedLoginAttempts = 0;
+  user.lockUntil = undefined;
   await user.save();
+  logger.info(`Auth: contraseña restablecida, sesiones invalidadas — userId=${user.id}`);
 
   return { ok: true };
 }

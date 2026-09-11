@@ -21,6 +21,11 @@ export const requireAuth = asyncHandler(async (req, res, next) => {
   if (!user) {
     throw ApiError.unauthorized('El usuario ya no existe');
   }
+  // Invalidación de sesiones: un token con tokenVersion viejo (p. ej. de antes de
+  // un restablecimiento de contraseña) deja de valer de inmediato.
+  if ((payload.tv ?? 0) !== (user.tokenVersion ?? 0)) {
+    throw ApiError.unauthorized('Sesión expirada, inicia sesión de nuevo');
+  }
 
   req.user = user;
   req.userId = user.id;
