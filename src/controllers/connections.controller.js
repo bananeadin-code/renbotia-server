@@ -3,7 +3,12 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiError } from '../utils/ApiError.js';
 import { env } from '../config/env.js';
 import { Business } from '../models/Business.js';
-import { exchangeCode, subscribeApp, registerPhone } from '../services/whatsappOnboarding.service.js';
+import {
+  exchangeCode,
+  subscribeApp,
+  registerPhone,
+  resolveWabaAndPhone,
+} from '../services/whatsappOnboarding.service.js';
 import { logAudit } from '../services/audit.service.js';
 
 /**
@@ -38,8 +43,9 @@ export const getConnections = asyncHandler(async (req, res) => {
 
 export const connectSchema = z.object({
   code: z.string().min(10),
-  wabaId: z.string().min(3),
-  phoneNumberId: z.string().min(3),
+  // Opcionales: si el navegador no los pasa, el backend los deduce del token.
+  wabaId: z.string().optional(),
+  phoneNumberId: z.string().optional(),
 });
 
 /** POST /api/connections/whatsapp — completa el Embedded Signup del cliente. */
@@ -49,9 +55,32 @@ export const connectWhatsApp = asyncHandler(async (req, res) => {
       code: 'EMBEDDED_DISABLED',
     });
   }
-  const { code, wabaId, phoneNumberId } = req.body;
+  const { code } = req.body;
+  let { wabaId, phoneNumberId } = req.body;
 
-  // Un número no puede estar conectado a dos negocios.
+  // 1) Canjea el code por un token con acceso a la WABA del cliente.
+  const ex = await exchangeCode(code);
+  if (!ex.ok) {
+    throw new ApiError(502, 'No se pudo completar la conexión con Meta. Intenta de nuevo.', {
+      code: 'EXCHANGE_FAILED',
+    });
+  }
+
+  // 2) Si el navegador no pasó WABA/número, los deducimos del token (robusto).
+  if (!wabaId || !phoneNumberId) {
+    const resolved = await resolveWabaAndPhone(ex.token);
+    if (!resolved.ok) {
+      throw new ApiError(
+        422,
+        'No pudimos leer tu número de WhatsApp. Revisa que esté agregado y verificado en tu cuenta de WhatsApp Business y vuelve a intentar.',
+        { code: 'NO_PHONE' }
+      );
+    }
+    wabaId = wabaId || resolved.wabaId;
+    phoneNumberId = phoneNumberId || resolved.phoneNumberId;
+  }
+
+  // 3) Un número no puede estar conectado a dos negocios.
   const clash = await Business.findOne({
     whatsappPhoneNumberId: phoneNumberId,
     _id: { $ne: req.businessId },
@@ -62,15 +91,7 @@ export const connectWhatsApp = asyncHandler(async (req, res) => {
     });
   }
 
-  // 1) Canjea el code por un token con acceso a la WABA del cliente.
-  const ex = await exchangeCode(code);
-  if (!ex.ok) {
-    throw new ApiError(502, 'No se pudo completar la conexión con Meta. Intenta de nuevo.', {
-      code: 'EXCHANGE_FAILED',
-    });
-  }
-
-  // 2) Suscribe la app a la WABA (indispensable para recibir sus mensajes).
+  // 4) Suscribe la app a la WABA (indispensable para recibir sus mensajes).
   const sub = await subscribeApp(wabaId, ex.token);
   if (!sub.ok) {
     throw new ApiError(502, 'No se pudo suscribir la cuenta de WhatsApp. Intenta de nuevo.', {

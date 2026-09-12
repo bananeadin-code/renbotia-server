@@ -79,3 +79,47 @@ export async function registerPhone(phoneNumberId, token, pin) {
     return { ok: false, error: err.message };
   }
 }
+
+/**
+ * Deduce la WABA y el número desde el token del cliente (robustez): tras el
+ * Embedded Signup, el token concede acceso a las cuentas de WhatsApp del cliente.
+ * Con debug_token leemos los `granular_scopes` (que traen los IDs de WABA
+ * concedidos) y luego consultamos el/los números de esa WABA. Así NO dependemos
+ * de que el navegador nos pase el número por postMessage.
+ *
+ * @returns {Promise<{ ok: boolean, wabaId?: string, phoneNumberId?: string, error?: string }>}
+ */
+export async function resolveWabaAndPhone(userToken) {
+  const version = env.whatsapp.apiVersion;
+  const appToken = `${env.whatsapp.appId}|${env.whatsapp.appSecret}`;
+
+  // 1) debug_token → WABA(s) concedidas en los scopes granulares.
+  let wabaId = '';
+  try {
+    const url = `${GRAPH}/${version}/debug_token?input_token=${encodeURIComponent(userToken)}&access_token=${encodeURIComponent(appToken)}`;
+    const res = await fetch(url);
+    const data = await res.json().catch(() => ({}));
+    const scopes = data?.data?.granular_scopes || [];
+    const waScope =
+      scopes.find((s) => s.scope === 'whatsapp_business_management') ||
+      scopes.find((s) => s.scope === 'whatsapp_business_messaging');
+    wabaId = waScope?.target_ids?.[0] || '';
+  } catch (err) {
+    logger.error(`WhatsApp Embedded: debug_token falló: ${err.message}`);
+    return { ok: false, error: err.message };
+  }
+  if (!wabaId) return { ok: false, error: 'no_waba' };
+
+  // 2) Número(s) de esa WABA.
+  try {
+    const url = `${GRAPH}/${version}/${wabaId}/phone_numbers?access_token=${encodeURIComponent(userToken)}`;
+    const res = await fetch(url);
+    const data = await res.json().catch(() => ({}));
+    const phoneNumberId = data?.data?.[0]?.id || '';
+    if (!phoneNumberId) return { ok: false, error: 'no_phone', wabaId };
+    return { ok: true, wabaId, phoneNumberId };
+  } catch (err) {
+    logger.error(`WhatsApp Embedded: phone_numbers falló: ${err.message}`);
+    return { ok: false, error: err.message };
+  }
+}
