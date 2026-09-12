@@ -155,6 +155,21 @@ export async function detachPaymentMethod(paymentMethodId) {
 }
 
 /**
+ * Elimina por completo el Customer de Stripe. Al borrarlo, Stripe desasocia y
+ * elimina también sus PaymentMethods (la tarjeta guardada). Se usa al eliminar
+ * la cuenta del usuario, para no dejar rastro suyo en Stripe. Best-effort: si los
+ * pagos no están configurados o el Customer ya no existe, no rompe el borrado.
+ */
+export async function deleteCustomer(customerId) {
+  if (!customerId || !env.stripe.secretKey) return;
+  try {
+    await getStripe().customers.del(customerId);
+  } catch (err) {
+    if (err?.statusCode !== 404) throw err;
+  }
+}
+
+/**
  * Cobra OFF-SESSION contra una tarjeta guardada (recarga automática). El cliente
  * no está presente. Devuelve el PaymentIntent o lanza un error tipado con el
  * motivo (tarjeta rechazada, requiere autenticación 3DS, etc.).

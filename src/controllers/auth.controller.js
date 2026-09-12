@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import * as authService from '../services/auth.service.js';
+import { deleteAccount as deleteAccountService } from '../services/account.service.js';
 import { User } from '../models/User.js';
 import { env, isProd } from '../config/env.js';
 
@@ -200,4 +201,24 @@ export const forgotPassword = asyncHandler(async (req, res) => {
 export const resetPassword = asyncHandler(async (req, res) => {
   await authService.resetPassword(req.body);
   res.json({ success: true, message: 'Contraseña actualizada, ya puedes iniciar sesión' });
+});
+
+// Eliminación de cuenta (irreversible). Password para cuentas con contraseña;
+// `confirm: 'ELIMINAR'` para cuentas de Google. El servicio decide cuál exigir.
+export const deleteAccountSchema = z.object({
+  password: z.string().optional(),
+  confirm: z.string().optional(),
+});
+
+/** DELETE /api/auth/account — elimina la cuenta del usuario y TODOS sus datos. */
+export const deleteAccount = asyncHandler(async (req, res) => {
+  await deleteAccountService({
+    userId: req.userId,
+    password: req.body.password,
+    confirm: req.body.confirm,
+  });
+  // Cierra la sesión: limpia las cookies del backend.
+  res.clearCookie('refreshToken', { path: '/api/auth' });
+  res.clearCookie('deviceToken', { path: '/api/auth' });
+  res.json({ success: true, message: 'Cuenta eliminada' });
 });

@@ -30,5 +30,7 @@ router.patch('/2fa', requireAuth, validate(auth.twoFactorSchema), auth.updateTwo
 // Cambio de correo con re-verificación (código al correo nuevo).
 router.post('/email/request', requireAuth, authLimiter, validate(auth.requestEmailChangeSchema), auth.requestEmailChange);
 router.post('/email/verify', requireAuth, authLimiter, validate(auth.verifyEmailChangeSchema), auth.verifyEmailChange);
+// Eliminación de cuenta (con rate limit: reautentica con contraseña).
+router.delete('/account', requireAuth, authLimiter, validate(auth.deleteAccountSchema), auth.deleteAccount);
 
 export default router;
