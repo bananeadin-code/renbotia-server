@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { env } from '../config/env.js';
+import { env, isProd } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 import { toWhatsAppNumber } from '../utils/phone.js';
 
@@ -30,10 +30,15 @@ export function isConfigured() {
  * @returns {boolean} true si la firma es válida (o si no hay appSecret configurado)
  */
 export function verifySignature(rawBody, signatureHeader) {
-  // Sin App Secret no podemos verificar (entorno de desarrollo): dejamos pasar,
-  // pero avisamos. En producción SIEMPRE debe estar configurado.
+  // Sin App Secret no podemos verificar. En PRODUCCIÓN cerramos (rechazamos) para
+  // no aceptar webhooks sin firmar por un descuido de configuración; en desarrollo
+  // dejamos pasar (para poder probar en local sin el secreto), avisando.
   if (!env.whatsapp.appSecret) {
-    logger.warn('WhatsApp: WHATSAPP_APP_SECRET no configurado; se omite verificación de firma.');
+    if (isProd) {
+      logger.error('WhatsApp: WHATSAPP_APP_SECRET no configurado en producción; se rechaza el webhook.');
+      return false;
+    }
+    logger.warn('WhatsApp: WHATSAPP_APP_SECRET no configurado (dev); se omite verificación de firma.');
     return true;
   }
   if (!signatureHeader || !rawBody) return false;
