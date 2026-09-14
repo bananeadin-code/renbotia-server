@@ -4,7 +4,8 @@ import { ApiError } from '../utils/ApiError.js';
 import { ChatSimulation } from '../models/ChatSimulation.js';
 import { Business } from '../models/Business.js';
 import { logAudit } from '../services/audit.service.js';
-import { sendText } from '../services/whatsapp.service.js';
+import { sendText, sendTemplate, listTemplates } from '../services/whatsapp.service.js';
+import { computeServiceWindow } from '../utils/whatsappWindow.js';
 import { toCsv } from '../utils/csv.js';
 
 /**
@@ -32,6 +33,9 @@ export const listConversations = asyncHandler(async (req, res) => {
       needsAttention: Boolean(c.needsAttention),
       attentionReason: c.attentionReason || '',
       messageCount: c.messages.length,
+      channel: c.channel || 'simulator',
+      // Ventana de 24h (solo WhatsApp; null en simulador/otros canales).
+      whatsappWindow: computeServiceWindow(c),
     };
   });
 
@@ -44,11 +48,14 @@ export const listConversations = asyncHandler(async (req, res) => {
   });
 });
 
-/** GET /api/conversations/:id — hilo completo. */
+/** GET /api/conversations/:id — hilo completo + estado de la ventana de 24h. */
 export const getConversation = asyncHandler(async (req, res) => {
   const chat = await ChatSimulation.findOne({ _id: req.params.id, business: req.businessId }).lean();
   if (!chat) throw ApiError.notFound('Conversación no encontrada');
-  res.json({ success: true, data: { conversation: chat } });
+  res.json({
+    success: true,
+    data: { conversation: chat, whatsappWindow: computeServiceWindow(chat) },
+  });
 });
 
 export const updateConversationSchema = z.object({
@@ -93,28 +100,107 @@ export const replyAsAgent = asyncHandler(async (req, res) => {
   const chat = await ChatSimulation.findOne({ _id: req.params.id, business: req.businessId });
   if (!chat) throw ApiError.notFound('Conversación no encontrada');
 
-  chat.messages.push({
-    role: 'assistant',
-    content: req.body.message.trim(),
-    via: 'agent',
-    timestamp: new Date(),
-  });
+  const text = req.body.message.trim();
+
+  // WhatsApp: fuera de la ventana de 24h NO se puede enviar texto libre (Meta lo
+  // rechaza). Se bloquea aquí para orientar al agente a usar una plantilla.
+  if (chat.channel === 'whatsapp') {
+    const win = computeServiceWindow(chat);
+    if (win && !win.open) {
+      throw new ApiError(
+        409,
+        'La ventana de 24 horas está cerrada. Para reactivar esta conversación, envía una plantilla aprobada.',
+        { code: 'WINDOW_CLOSED' }
+      );
+    }
+  }
+
+  chat.messages.push({ role: 'assistant', content: text, via: 'agent', timestamp: new Date() });
   chat.handoffMode = 'manual'; // responder como humano implica tomar el control
   chat.needsAttention = false;
   await chat.save();
 
-  // Si es una conversación real de WhatsApp, el mensaje del agente sale al cliente
-  // por la Cloud API (best-effort; no bloquea la respuesta HTTP).
+  // Conversación real de WhatsApp: el mensaje del agente sale al cliente por la
+  // Cloud API. Esperamos el resultado para poder ORIENTAR si algo falla.
+  let sendWarning = null;
   if (chat.channel === 'whatsapp' && chat.customerPhone) {
     const biz = await Business.findById(req.businessId).select('whatsappPhoneNumberId');
-    void sendText({
-      phoneNumberId: biz?.whatsappPhoneNumberId,
-      to: chat.customerPhone,
-      text: req.body.message.trim(),
-    });
+    const result = await sendText({ phoneNumberId: biz?.whatsappPhoneNumberId, to: chat.customerPhone, text });
+    if (!result.ok) {
+      sendWarning = result.billing
+        ? 'El mensaje se guardó, pero Meta no lo entregó: falta un método de pago en tu cuenta de Meta.'
+        : 'El mensaje se guardó, pero no se pudo entregar por WhatsApp. Intenta de nuevo en un momento.';
+    }
   }
 
+  res.json({ success: true, data: { conversation: chat, sendWarning } });
+});
+
+export const templateSchema = z.object({
+  templateName: z.string().min(1, 'Elige una plantilla').max(512),
+  languageCode: z.string().min(2).max(10).optional(),
+});
+
+/**
+ * POST /api/conversations/:id/template — envía una PLANTILLA aprobada. Es la vía
+ * para reactivar una conversación de WhatsApp cuya ventana de 24h ya cerró.
+ */
+export const sendTemplateReply = asyncHandler(async (req, res) => {
+  const chat = await ChatSimulation.findOne({ _id: req.params.id, business: req.businessId });
+  if (!chat) throw ApiError.notFound('Conversación no encontrada');
+  if (chat.channel !== 'whatsapp' || !chat.customerPhone) {
+    throw ApiError.badRequest('Las plantillas solo se envían en conversaciones de WhatsApp.');
+  }
+
+  const biz = await Business.findById(req.businessId).select('whatsappPhoneNumberId');
+  const result = await sendTemplate({
+    phoneNumberId: biz?.whatsappPhoneNumberId,
+    to: chat.customerPhone,
+    templateName: req.body.templateName,
+    languageCode: req.body.languageCode || 'es_MX',
+  });
+
+  if (!result.ok) {
+    if (result.billing) {
+      throw new ApiError(
+        402,
+        'Meta no entregó la plantilla: falta un método de pago en tu cuenta de Meta. Agrégalo para poder reactivar conversaciones.',
+        { code: 'META_PAYMENT_REQUIRED' }
+      );
+    }
+    throw new ApiError(502, `No se pudo enviar la plantilla: ${result.error}`, { code: 'TEMPLATE_FAILED' });
+  }
+
+  // Registrar en el hilo para que el agente vea que se envió.
+  chat.messages.push({
+    role: 'assistant',
+    content: `Plantilla enviada: ${req.body.templateName}`,
+    via: 'agent',
+    timestamp: new Date(),
+  });
+  chat.handoffMode = 'manual';
+  chat.needsAttention = false;
+  await chat.save();
+
   res.json({ success: true, data: { conversation: chat } });
+});
+
+/**
+ * GET /api/conversations/templates — plantillas APROBADAS de la WABA del negocio,
+ * para ofrecerlas cuando la ventana de 24h está cerrada. `reason` explica por qué
+ * viene vacía (sin WABA conectada o falló la consulta) para orientar en la UI.
+ */
+export const listBusinessTemplates = asyncHandler(async (req, res) => {
+  const biz = await Business.findById(req.businessId).select('whatsappWabaId');
+  if (!biz?.whatsappWabaId) {
+    return res.json({ success: true, data: { templates: [], reason: 'no_waba' } });
+  }
+  const result = await listTemplates(biz.whatsappWabaId);
+  const approved = (result.templates || []).filter((t) => t.status === 'APPROVED');
+  res.json({
+    success: true,
+    data: { templates: approved, reason: result.ok ? null : 'fetch_failed' },
+  });
 });
 
 /** GET /api/conversations/export — descarga las conversaciones en CSV. */

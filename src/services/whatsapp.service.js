@@ -92,13 +92,107 @@ export async function sendText({ phoneNumberId, to, text }) {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      logger.error(`WhatsApp: fallo al enviar (${res.status}): ${JSON.stringify(data?.error || data)}`);
-      return { ok: false, error: data?.error?.message || `HTTP ${res.status}` };
+      const err = data?.error || {};
+      logger.error(`WhatsApp: fallo al enviar (${res.status}): ${JSON.stringify(err)}`);
+      return { ok: false, error: err.message || `HTTP ${res.status}`, code: err.code, billing: isBillingError(err) };
     }
     return { ok: true, id: data?.messages?.[0]?.id };
   } catch (err) {
     logger.error(`WhatsApp: error de red al enviar: ${err.message}`);
     return { ok: false, error: err.message };
+  }
+}
+
+/**
+ * ¿El error de Meta indica que falta un MÉTODO DE PAGO / problema de elegibilidad
+ * de facturación? Se usa para orientar al usuario a agregar su tarjeta en Meta.
+ */
+export function isBillingError(err) {
+  if (!err) return false;
+  if (Number(err.code) === 131042) return true; // "Business eligibility payment issue"
+  const msg = `${err.message || ''} ${err.error_data?.details || ''}`.toLowerCase();
+  return /payment|billing|método de pago|forma de pago/.test(msg);
+}
+
+/**
+ * Envía un mensaje de PLANTILLA aprobada por la Cloud API. Es la ÚNICA forma de
+ * escribirle a un cliente FUERA de la ventana de servicio de 24 h.
+ *
+ * @param {object} p
+ * @param {string} p.phoneNumberId  id del número emisor (el del negocio)
+ * @param {string} p.to             destinatario (wa_id / E.164 sin '+')
+ * @param {string} p.templateName   nombre EXACTO de la plantilla aprobada en Meta
+ * @param {string} [p.languageCode] código de idioma de la plantilla (ej. 'es_MX')
+ * @param {string[]} [p.bodyParams] variables del cuerpo ({{1}}, {{2}}…), en orden
+ * @returns {Promise<{ ok: boolean, id?: string, error?: string, code?: number, billing?: boolean }>}
+ */
+export async function sendTemplate({ phoneNumberId, to, templateName, languageCode = 'es_MX', bodyParams = [] }) {
+  const id = phoneNumberId || env.whatsapp.phoneNumberId;
+  if (!isConfigured() || !id) {
+    logger.warn('WhatsApp: plantilla omitida (sin token o sin phoneNumberId).');
+    return { ok: false, error: 'not_configured' };
+  }
+
+  const recipient = toWhatsAppNumber(to);
+  const url = `${GRAPH}/${env.whatsapp.apiVersion}/${id}/messages`;
+  const components = bodyParams.length
+    ? [{ type: 'body', parameters: bodyParams.map((t) => ({ type: 'text', text: String(t) })) }]
+    : undefined;
+  const body = {
+    messaging_product: 'whatsapp',
+    to: recipient,
+    type: 'template',
+    template: {
+      name: templateName,
+      language: { code: languageCode },
+      ...(components ? { components } : {}),
+    },
+  };
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${env.whatsapp.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = data?.error || {};
+      logger.error(`WhatsApp: fallo al enviar plantilla (${res.status}): ${JSON.stringify(err)}`);
+      return { ok: false, error: err.message || `HTTP ${res.status}`, code: err.code, billing: isBillingError(err) };
+    }
+    return { ok: true, id: data?.messages?.[0]?.id };
+  } catch (err) {
+    logger.error(`WhatsApp: error de red al enviar plantilla: ${err.message}`);
+    return { ok: false, error: err.message };
+  }
+}
+
+/**
+ * Lista las plantillas de mensaje de una WABA (para ofrecerlas en la bandeja
+ * cuando la ventana de 24 h está cerrada). Solo se usan las APPROVED.
+ * @returns {Promise<{ ok: boolean, templates: Array, error?: string }>}
+ */
+export async function listTemplates(wabaId) {
+  if (!isConfigured() || !wabaId) return { ok: false, error: 'not_configured', templates: [] };
+  const url = `${GRAPH}/${env.whatsapp.apiVersion}/${wabaId}/message_templates?fields=name,status,language,category&limit=100`;
+  try {
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${env.whatsapp.token}` } });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      logger.error(`WhatsApp: fallo al listar plantillas (${res.status}): ${JSON.stringify(data?.error || data)}`);
+      return { ok: false, error: data?.error?.message || `HTTP ${res.status}`, templates: [] };
+    }
+    const templates = (data.data || []).map((t) => ({
+      name: t.name,
+      language: t.language,
+      status: t.status,
+      category: t.category,
+    }));
+    return { ok: true, templates };
+  } catch (err) {
+    logger.error(`WhatsApp: error de red al listar plantillas: ${err.message}`);
+    return { ok: false, error: err.message, templates: [] };
   }
 }
 
