@@ -44,7 +44,7 @@ export const PLANS = [
       'Tono personalizable + instrucciones de personalidad',
       'Contexto ampliado del negocio',
       'Módulo de Gestión: agenda citas, toma pedidos y capta prospectos',
-      'El bot envía imágenes por sí solo (hasta 15)',
+      'El bot envía imágenes por sí solo (hasta 30)',
       'Colaboradores y bandeja de Conversaciones',
     ],
   },
@@ -60,7 +60,7 @@ export const PLANS = [
 export const PLAN_LIMITS = {
   free: { maxFaqs: 2, personality: false, tone: false, extraContext: false, maxImages: 0, management: false, multiUser: false, multiChannel: false },
   pro: { maxFaqs: 10, personality: true, tone: true, extraContext: true, maxImages: 0, management: false, multiUser: true, multiChannel: true },
-  elite: { maxFaqs: null, personality: true, tone: true, extraContext: true, maxImages: 15, management: true, multiUser: true, multiChannel: true },
+  elite: { maxFaqs: null, personality: true, tone: true, extraContext: true, maxImages: 30, management: true, multiUser: true, multiChannel: true },
 };
 
 /**
@@ -168,6 +168,15 @@ export const WALLET_TOKEN_WEIGHTS = {
   cacheRead: 0.5,
   output: 1,
 };
+
+/**
+ * Descuento global adicional sobre lo que se DESCUENTA de la billetera del
+ * cliente (no toca el costo real en UsageLog). Se aplica al total ya ponderado
+ * por WALLET_TOKEN_WEIGHTS. 0.85 = el cliente consume ~15% menos de lo que
+ * gastaría sin este descuento. El margen lo aguanta de sobra (ver notas de
+ * márgenes). Sube a 1 para quitarlo, o bájalo para dar aún más "gratis".
+ */
+export const WALLET_DISCOUNT = 0.85;
 
 export const ROLES = {
   CLIENTE: 'cliente',

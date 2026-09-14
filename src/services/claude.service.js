@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { env } from '../config/env.js';
 import { ApiError } from '../utils/ApiError.js';
 import { logger } from '../utils/logger.js';
-import { WALLET_TOKEN_WEIGHTS } from '../config/constants.js';
+import { WALLET_TOKEN_WEIGHTS, WALLET_DISCOUNT } from '../config/constants.js';
 
 // Un solo caché para configuración + entrenamiento. TTL de 1 hora para que el
 // bloque persista casi toda la sesión del cliente (se reconstruye solo cuando
@@ -16,12 +16,13 @@ const SYSTEM_CACHE_CONTROL = { type: 'ephemeral', ttl: '1h' };
  */
 function computeBillable({ inputTokens = 0, cacheCreationTokens = 0, cacheReadTokens = 0, outputTokens = 0 }) {
   const w = WALLET_TOKEN_WEIGHTS;
-  return Math.round(
+  const weighted =
     inputTokens * w.input +
-      cacheCreationTokens * w.cacheCreation +
-      cacheReadTokens * w.cacheRead +
-      outputTokens * w.output
-  );
+    cacheCreationTokens * w.cacheCreation +
+    cacheReadTokens * w.cacheRead +
+    outputTokens * w.output;
+  // Descuento global adicional (el cliente consume ~15% menos).
+  return Math.round(weighted * WALLET_DISCOUNT);
 }
 
 /**

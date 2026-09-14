@@ -19,4 +19,22 @@ router.post(
 );
 router.post('/whatsapp/disconnect', requireBusinessRole('owner'), connections.disconnectWhatsApp);
 
+// Perfil de WhatsApp Business (ver: cualquier miembro; editar: dueño).
+router.get('/whatsapp/profile', connections.getWhatsappProfile);
+router.put(
+  '/whatsapp/profile',
+  requireBusinessRole('owner'),
+  validate(connections.updateWhatsappProfileSchema),
+  connections.updateWhatsappProfile
+);
+
+// Plantillas de la WABA (ver: cualquier miembro; crear: dueño).
+router.get('/whatsapp/templates', connections.listWhatsappTemplates);
+router.post(
+  '/whatsapp/templates',
+  requireBusinessRole('owner'),
+  validate(connections.createTemplateSchema),
+  connections.createWhatsappTemplate
+);
+
 export default router;

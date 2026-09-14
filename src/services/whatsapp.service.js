@@ -196,6 +196,94 @@ export async function listTemplates(wabaId) {
   }
 }
 
+/**
+ * Lee el perfil de WhatsApp Business del número (lo que el cliente ve en el chat:
+ * "info", descripción, web, email, categoría, foto). El NOMBRE visible NO viene
+ * aquí (es el verified name del alta).
+ * @returns {Promise<{ ok: boolean, profile?: object, error?: string }>}
+ */
+export async function getBusinessProfile(phoneNumberId) {
+  const id = phoneNumberId || env.whatsapp.phoneNumberId;
+  if (!isConfigured() || !id) return { ok: false, error: 'not_configured' };
+  const fields = 'about,address,description,email,profile_picture_url,websites,vertical';
+  const url = `${GRAPH}/${env.whatsapp.apiVersion}/${id}/whatsapp_business_profile?fields=${fields}`;
+  try {
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${env.whatsapp.token}` } });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      logger.error(`WhatsApp: fallo al leer perfil (${res.status}): ${JSON.stringify(data?.error || data)}`);
+      return { ok: false, error: data?.error?.message || `HTTP ${res.status}` };
+    }
+    return { ok: true, profile: data?.data?.[0] || {} };
+  } catch (err) {
+    logger.error(`WhatsApp: error de red al leer perfil: ${err.message}`);
+    return { ok: false, error: err.message };
+  }
+}
+
+/**
+ * Actualiza el perfil de WhatsApp Business. Solo campos editables por API:
+ * about, description, email, websites[], vertical, address. (El nombre visible
+ * NO se cambia aquí; requiere revisión de Meta.)
+ */
+export async function updateBusinessProfile(phoneNumberId, fields) {
+  const id = phoneNumberId || env.whatsapp.phoneNumberId;
+  if (!isConfigured() || !id) return { ok: false, error: 'not_configured' };
+  const url = `${GRAPH}/${env.whatsapp.apiVersion}/${id}/whatsapp_business_profile`;
+  const body = { messaging_product: 'whatsapp', ...fields };
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${env.whatsapp.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.success === false) {
+      const err = data?.error || {};
+      logger.error(`WhatsApp: fallo al actualizar perfil (${res.status}): ${JSON.stringify(err)}`);
+      return { ok: false, error: err.message || `HTTP ${res.status}` };
+    }
+    return { ok: true };
+  } catch (err) {
+    logger.error(`WhatsApp: error de red al actualizar perfil: ${err.message}`);
+    return { ok: false, error: err.message };
+  }
+}
+
+/**
+ * Crea (envía a aprobación) una plantilla de texto en la WABA. Cuerpo estático
+ * (sin variables) para no requerir ejemplos y facilitar la aprobación. Meta la
+ * revisa: queda en estado PENDING hasta aprobarse.
+ * @returns {Promise<{ ok: boolean, id?: string, status?: string, error?: string }>}
+ */
+export async function createTemplate(wabaId, { name, category, language = 'es_MX', bodyText }) {
+  if (!isConfigured() || !wabaId) return { ok: false, error: 'not_configured' };
+  const url = `${GRAPH}/${env.whatsapp.apiVersion}/${wabaId}/message_templates`;
+  const body = {
+    name,
+    category,
+    language,
+    components: [{ type: 'BODY', text: bodyText }],
+  };
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${env.whatsapp.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = data?.error || {};
+      logger.error(`WhatsApp: fallo al crear plantilla (${res.status}): ${JSON.stringify(err)}`);
+      return { ok: false, error: err.message || `HTTP ${res.status}` };
+    }
+    return { ok: true, id: data.id, status: data.status };
+  } catch (err) {
+    logger.error(`WhatsApp: error de red al crear plantilla: ${err.message}`);
+    return { ok: false, error: err.message };
+  }
+}
+
 /** Extensión de archivo tentativa a partir del tipo MIME (para el upload). */
 function extFromMime(mime) {
   const map = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' };
