@@ -251,6 +251,64 @@ export async function updateBusinessProfile(phoneNumberId, fields) {
 }
 
 /**
+ * Asigna la FOTO de perfil de WhatsApp Business. Requiere la subida resumable de
+ * Meta en 3 pasos: (1) abrir sesión de subida a nivel de app, (2) subir los bytes
+ * y obtener un `handle`, (3) asignar ese handle al perfil del número.
+ * @param {string} dataUri  imagen como data URI (image/jpeg o image/png)
+ * @returns {Promise<{ ok: boolean, error?: string }>}
+ */
+export async function setBusinessProfilePhoto(phoneNumberId, dataUri) {
+  const id = phoneNumberId || env.whatsapp.phoneNumberId;
+  if (!isConfigured() || !id) return { ok: false, error: 'not_configured' };
+  if (!env.whatsapp.appId) return { ok: false, error: 'no_app_id' };
+  const m = /^data:([^;]+);base64,(.+)$/s.exec(dataUri || '');
+  if (!m) return { ok: false, error: 'imagen inválida' };
+  const mime = m[1];
+  const buffer = Buffer.from(m[2], 'base64');
+  const version = env.whatsapp.apiVersion;
+  const token = env.whatsapp.token;
+
+  try {
+    // 1) Abrir la sesión de subida (a nivel de app).
+    const startUrl = `${GRAPH}/${version}/${env.whatsapp.appId}/uploads?file_length=${buffer.length}&file_type=${encodeURIComponent(mime)}`;
+    const startRes = await fetch(startUrl, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+    const startData = await startRes.json().catch(() => ({}));
+    if (!startRes.ok || !startData.id) {
+      logger.error(`WhatsApp: fallo al iniciar subida de foto (${startRes.status}): ${JSON.stringify(startData?.error || startData)}`);
+      return { ok: false, error: startData?.error?.message || `HTTP ${startRes.status}` };
+    }
+
+    // 2) Subir los bytes → devuelve el handle `h`.
+    const upRes = await fetch(`${GRAPH}/${version}/${startData.id}`, {
+      method: 'POST',
+      headers: { Authorization: `OAuth ${token}`, file_offset: '0', 'Content-Type': mime },
+      body: buffer,
+    });
+    const upData = await upRes.json().catch(() => ({}));
+    if (!upRes.ok || !upData.h) {
+      logger.error(`WhatsApp: fallo al subir foto (${upRes.status}): ${JSON.stringify(upData?.error || upData)}`);
+      return { ok: false, error: upData?.error?.message || `HTTP ${upRes.status}` };
+    }
+
+    // 3) Asignar la foto al perfil.
+    const setRes = await fetch(`${GRAPH}/${version}/${id}/whatsapp_business_profile`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messaging_product: 'whatsapp', profile_picture_handle: upData.h }),
+    });
+    const setData = await setRes.json().catch(() => ({}));
+    if (!setRes.ok) {
+      logger.error(`WhatsApp: fallo al asignar foto (${setRes.status}): ${JSON.stringify(setData?.error || setData)}`);
+      return { ok: false, error: setData?.error?.message || `HTTP ${setRes.status}` };
+    }
+    return { ok: true };
+  } catch (err) {
+    logger.error(`WhatsApp: error de red al subir foto de perfil: ${err.message}`);
+    return { ok: false, error: err.message };
+  }
+}
+
+/**
  * Crea (envía a aprobación) una plantilla de texto en la WABA. Cuerpo estático
  * (sin variables) para no requerir ejemplos y facilitar la aprobación. Meta la
  * revisa: queda en estado PENDING hasta aprobarse.

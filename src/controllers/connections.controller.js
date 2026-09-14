@@ -12,6 +12,7 @@ import {
 import {
   getBusinessProfile,
   updateBusinessProfile,
+  setBusinessProfilePhoto,
   createTemplate,
   listTemplates,
 } from '../services/whatsapp.service.js';
@@ -187,6 +188,8 @@ export const updateWhatsappProfileSchema = z.object({
   website: z.string().url('URL inválida (incluye https://)').max(256).optional().or(z.literal('')),
   address: z.string().max(256).optional(),
   vertical: z.string().max(40).optional(),
+  // Foto de perfil nueva como data URI (opcional). ~3MB de base64 ≈ 2.2MB de imagen.
+  photo: z.string().max(3_000_000).optional(),
 });
 
 /** PUT /api/connections/whatsapp/profile — actualiza el perfil (solo dueño). */
@@ -194,6 +197,14 @@ export const updateWhatsappProfile = asyncHandler(async (req, res) => {
   const business = await Business.findById(req.businessId).select('whatsappPhoneNumberId');
   if (!business?.whatsappPhoneNumberId) {
     throw new ApiError(400, 'Conecta tu WhatsApp antes de editar el perfil.', { code: 'NOT_CONNECTED' });
+  }
+
+  // Foto de perfil (subida resumable en 3 pasos) si viene una nueva.
+  if (req.body.photo) {
+    const photoRes = await setBusinessProfilePhoto(business.whatsappPhoneNumberId, req.body.photo);
+    if (!photoRes.ok) {
+      throw new ApiError(502, `No se pudo actualizar la foto: ${photoRes.error}`, { code: 'PHOTO_FAILED' });
+    }
   }
 
   const { description, about, email, website, address, vertical } = req.body;
