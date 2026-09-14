@@ -4,6 +4,7 @@ import { receiptEmail } from '../emails/receipt.js';
 import { lowBalanceEmail } from '../emails/lowBalance.js';
 import { passwordResetEmail } from '../emails/passwordReset.js';
 import { welcomeEmail } from '../emails/welcome.js';
+import { escalationEmail } from '../emails/escalation.js';
 import { User } from '../models/User.js';
 
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
@@ -120,6 +121,30 @@ export async function sendPasswordResetEmail(p) {
     return await sendEmail({ to: p.to, subject, html });
   } catch (err) {
     logger.warn(`[email] No se pudo enviar el correo de reset: ${err.message}`);
+    return { ok: false, error: err.message };
+  }
+}
+
+/**
+ * Avisa al dueño que una conversación necesita atención humana (el bot escaló).
+ * Fail-open. Resuelve el correo del usuario por userId si no se pasa `to`.
+ * @param {object} p
+ * @param {string|import('mongoose').Types.ObjectId} [p.userId]
+ * @param {string} [p.to]
+ * @param {string} [p.businessName]
+ * @param {string} [p.reason]
+ * @param {string} [p.contactName]
+ * @param {string} [p.preview]
+ */
+export async function sendEscalationEmail(p) {
+  try {
+    const user = p.userId ? await User.findById(p.userId).select('email name').lean() : null;
+    const to = p.to || user?.email;
+    if (!to) return { skipped: true };
+    const { subject, html } = escalationEmail({ ...p, customerName: user?.name });
+    return await sendEmail({ to, subject, html });
+  } catch (err) {
+    logger.warn(`[email] No se pudo enviar el aviso de escalación: ${err.message}`);
     return { ok: false, error: err.message };
   }
 }

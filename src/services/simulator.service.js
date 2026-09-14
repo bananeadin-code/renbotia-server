@@ -12,6 +12,7 @@ import { usableImages, buildImageTool, executeImageTool } from './imageTools.ser
 import { buildEscalationTool } from './handoffTools.service.js';
 import { maybeAutoRecharge } from './autoRecharge.service.js';
 import { maybeNotifyLowBalance } from './lowBalance.service.js';
+import { sendEscalationEmail } from './email.service.js';
 import { sanitizeBotConfigForPlan } from '../utils/planGating.js';
 import { logger } from '../utils/logger.js';
 
@@ -226,11 +227,24 @@ export async function processMessage({
     timestamp: now,
   });
   // Si el bot escaló, la conversación pasa a requerir atención humana.
+  const wasFlagged = chat.needsAttention;
   if (escalation.flagged) {
     chat.needsAttention = true;
     chat.attentionReason = escalation.reason;
   }
   await chat.save();
+
+  // Aviso por correo al dueño cuando escala por PRIMERA vez (wasFlagged=false) y
+  // es un canal REAL (no el simulador, que es una prueba). Fire-and-forget.
+  if (escalation.flagged && !wasFlagged && source !== 'simulator') {
+    void sendEscalationEmail({
+      userId: business?.owner,
+      businessName: business?.name,
+      reason: escalation.reason,
+      contactName: chat.customerName || '',
+      preview: message.slice(0, 160),
+    });
+  }
 
   // 9) Registrar el consumo (append-only) para la gráfica y el costo real en admin
   await UsageLog.create({

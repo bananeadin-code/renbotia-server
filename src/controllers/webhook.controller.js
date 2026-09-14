@@ -134,8 +134,13 @@ async function handleMessage({ business, phoneNumberId, msg, customerName }) {
       await sendText({ phoneNumberId, to: from, text: result.reply });
     }
     // Imágenes que el bot decidió enviar (Elite): tras el texto, en orden.
-    for (const image of result?.images || []) {
-      await sendImage({ phoneNumberId, to: from, image });
+    // OJO: processMessage devuelve `sentImages` (no `images`). Se registra el
+    // fallo por imagen para no perderlo en silencio.
+    for (const image of result?.sentImages || []) {
+      const r = await sendImage({ phoneNumberId, to: from, image });
+      if (!r?.ok) {
+        logger.error(`WhatsApp: no se pudo enviar la imagen "${image?.label}": ${r?.error}`);
+      }
     }
   } catch (err) {
     // Sin créditos (402): no respondemos con un error técnico al cliente real; se
