@@ -16,6 +16,7 @@ export const PLANS = [
       'Datos del negocio: horario, ubicación y servicios',
       'Tono neutral',
       'Bandeja de Conversaciones (bot y manual)',
+      'Un canal conectado a la vez (WhatsApp, Instagram o Messenger)',
     ],
   },
   {
@@ -31,6 +32,7 @@ export const PLANS = [
       'Contexto ampliado: describe tu negocio a detalle',
       'Colaboradores: invita a tu equipo',
       'Simulador y bandeja de Conversaciones',
+      'Multicanal: varios canales a la vez (Instagram y Messenger en camino)',
     ],
   },
   {
@@ -46,6 +48,7 @@ export const PLANS = [
       'Módulo de Gestión: agenda citas, toma pedidos y capta prospectos',
       'El bot envía imágenes por sí solo (hasta 30)',
       'Colaboradores y bandeja de Conversaciones',
+      'Multicanal: varios canales a la vez (Instagram y Messenger en camino)',
     ],
   },
 ];
