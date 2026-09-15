@@ -53,6 +53,17 @@ const botConfigSchema = new mongoose.Schema(
       ],
       default: [],
     },
+    // Elite: documentos de contexto subidos por el negocio (PDF, texto). Guardamos
+    // el TEXTO ya extraído (no el archivo) como material de referencia del bot.
+    documents: {
+      type: [
+        {
+          name: { type: String, default: '', trim: true },
+          text: { type: String, default: '' },
+        },
+      ],
+      default: [],
+    },
   },
   { timestamps: true }
 );

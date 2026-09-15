@@ -22,6 +22,35 @@ export function isConfigured() {
 }
 
 /**
+ * Descarga un archivo (media) que el cliente envió por WhatsApp. Son 2 pasos:
+ * (1) pedir la URL temporal del media por su id, (2) bajar los bytes con el token.
+ * Devuelve base64 + mime para pasarlo a la visión de Claude. Tope ~5MB.
+ * @returns {Promise<{ ok: boolean, mime?: string, base64?: string, size?: number, error?: string }>}
+ */
+export async function downloadMedia(mediaId) {
+  if (!isConfigured() || !mediaId) return { ok: false, error: 'not_configured' };
+  try {
+    const metaRes = await fetch(`${GRAPH}/${env.whatsapp.apiVersion}/${mediaId}`, {
+      headers: { Authorization: `Bearer ${env.whatsapp.token}` },
+    });
+    const meta = await metaRes.json().catch(() => ({}));
+    if (!metaRes.ok || !meta.url) {
+      logger.error(`WhatsApp: fallo al leer media (${metaRes.status}): ${JSON.stringify(meta?.error || meta)}`);
+      return { ok: false, error: meta?.error?.message || `HTTP ${metaRes.status}` };
+    }
+    const binRes = await fetch(meta.url, { headers: { Authorization: `Bearer ${env.whatsapp.token}` } });
+    if (!binRes.ok) return { ok: false, error: `HTTP ${binRes.status}` };
+    const buf = Buffer.from(await binRes.arrayBuffer());
+    if (buf.length > 5 * 1024 * 1024) return { ok: false, error: 'archivo muy grande' };
+    const mime = meta.mime_type || binRes.headers.get('content-type') || 'image/jpeg';
+    return { ok: true, mime, base64: buf.toString('base64'), size: buf.length };
+  } catch (err) {
+    logger.error(`WhatsApp: error al descargar media: ${err.message}`);
+    return { ok: false, error: err.message };
+  }
+}
+
+/**
  * Verifica la firma X-Hub-Signature-256 del webhook contra el App Secret.
  * Meta firma los BYTES EXACTOS del body (por eso guardamos req.rawBody).
  *

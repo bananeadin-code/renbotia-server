@@ -61,9 +61,9 @@ export const PLANS = [
 // multiChannel: conectar el bot a más de un canal (WhatsApp + Instagram + Facebook).
 // Beneficio de Pro y Elite (no Free). Listo para la Fase 2 multicanal.
 export const PLAN_LIMITS = {
-  free: { maxFaqs: 2, personality: false, tone: false, extraContext: false, maxImages: 0, management: false, multiUser: false, multiChannel: false },
-  pro: { maxFaqs: 10, personality: true, tone: true, extraContext: true, maxImages: 0, management: false, multiUser: true, multiChannel: true },
-  elite: { maxFaqs: null, personality: true, tone: true, extraContext: true, maxImages: 30, management: true, multiUser: true, multiChannel: true },
+  free: { maxFaqs: 2, personality: false, tone: false, extraContext: false, maxImages: 0, documents: false, visionInput: false, management: false, multiUser: false, multiChannel: false },
+  pro: { maxFaqs: 10, personality: true, tone: true, extraContext: true, maxImages: 0, documents: false, visionInput: false, management: false, multiUser: true, multiChannel: true },
+  elite: { maxFaqs: null, personality: true, tone: true, extraContext: true, maxImages: 30, documents: true, visionInput: true, management: true, multiUser: true, multiChannel: true },
 };
 
 /**

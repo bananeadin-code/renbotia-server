@@ -33,11 +33,14 @@ export async function processMessage({
   businessId,
   business,
   message,
+  image = null, // { mediaType, data(base64) } cuando el cliente envía una imagen
   chatId,
   channel = 'simulator',
   customer = null, // { phone, name } cuando viene de WhatsApp real
   source = 'simulator', // etiqueta para UsageLog ('simulator' | 'whatsapp')
 }) {
+  // Texto efectivo para historial/título: si es solo imagen, un marcador legible.
+  const userText = (message || '').trim() || (image ? '(imagen del cliente)' : '');
   // 1) Suscripción + reseteo perezoso + verificación de créditos
   const subscription = await Subscription.findOne({ business: businessId }).populate('plan');
   if (!subscription) {
@@ -80,7 +83,7 @@ export async function processMessage({
   } else {
     chat = new ChatSimulation({
       business: businessId,
-      title: customer?.name || message.slice(0, 40) || 'Nueva conversación',
+      title: customer?.name || userText.slice(0, 40) || 'Nueva conversación',
       channel,
       customerPhone: customer?.phone || '',
       customerName: customer?.name || '',
@@ -93,7 +96,7 @@ export async function processMessage({
   // respuesta la dará la persona desde la bandeja de Conversaciones. No consume
   // tokens ni llama a la IA.
   if (chat.handoffMode === 'manual') {
-    chat.messages.push({ role: 'user', content: message, timestamp: new Date() });
+    chat.messages.push({ role: 'user', content: userText, timestamp: new Date() });
     await chat.save();
     return {
       reply: null,
@@ -124,7 +127,23 @@ export async function processMessage({
     role: m.role,
     content: m.content,
   }));
-  const claudeMessages = [...history, { role: 'user', content: message }];
+  // Si el cliente mandó una imagen y el plan es Elite, el mensaje actual va como
+  // contenido multimodal (texto + imagen) para que Claude la INTERPRETE con visión.
+  // La imagen solo se manda en ESTE turno; en el historial se guarda solo texto
+  // (no reenviamos el base64 cada vez, sería caro).
+  const currentContent =
+    isElite && image
+      ? [
+          {
+            type: 'text',
+            text: (message || '').trim()
+              ? message
+              : 'El cliente envió esta imagen. Interprétala y responde según la información del negocio.',
+          },
+          { type: 'image', source: { type: 'base64', media_type: image.mediaType, data: image.data } },
+        ]
+      : userText;
+  const claudeMessages = [...history, { role: 'user', content: currentContent }];
 
   // 6) Herramientas disponibles: gestión (citas/pedidos…), imágenes del bot y
   //    la escalación a humano (esta última para TODOS los planes).
@@ -217,7 +236,7 @@ export async function processMessage({
   // 8) Persistir mensajes en la conversación
   const now = new Date();
   const promptTokens = inputTokens + cacheReadTokens + cacheCreationTokens;
-  chat.messages.push({ role: 'user', content: message, tokens: promptTokens, timestamp: now });
+  chat.messages.push({ role: 'user', content: userText, tokens: promptTokens, timestamp: now });
   chat.messages.push({
     role: 'assistant',
     content: text,

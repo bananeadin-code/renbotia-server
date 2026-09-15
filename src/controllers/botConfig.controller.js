@@ -41,7 +41,16 @@ export const updateBotConfigSchema = z.object({
     })
     .optional(),
   extraContext: z.string().max(6000).optional(),
-  images: z.array(imageSchema).max(15).optional(),
+  images: z.array(imageSchema).max(30).optional(),
+  documents: z
+    .array(
+      z.object({
+        name: z.string().max(120).optional().default(''),
+        text: z.string().max(20000).optional().default(''),
+      })
+    )
+    .max(10)
+    .optional(),
 });
 
 async function getConfigOrThrow(businessId) {

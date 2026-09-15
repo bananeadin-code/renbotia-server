@@ -3,7 +3,7 @@ import { logger } from '../utils/logger.js';
 import { Business } from '../models/Business.js';
 import { ChatSimulation } from '../models/ChatSimulation.js';
 import { processMessage } from '../services/simulator.service.js';
-import { verifySignature, sendText, sendImage } from '../services/whatsapp.service.js';
+import { verifySignature, sendText, sendImage, downloadMedia } from '../services/whatsapp.service.js';
 
 /**
  * Webhook de WhatsApp Cloud API (Meta).
@@ -93,19 +93,34 @@ async function handleMessage({ business, phoneNumberId, msg, customerName }) {
 
   const from = msg.from; // wa_id del cliente (solo dígitos)
   let text = '';
+  let image = null;
   if (msg.type === 'text') {
     text = msg.text?.body || '';
+  } else if (msg.type === 'image') {
+    // El cliente mandó una imagen: la descargamos y se la pasamos al bot para que
+    // la interprete (la visión solo se usa en Elite; lo decide processMessage).
+    const media = await downloadMedia(msg.image?.id);
+    if (media.ok && /^image\//.test(media.mime)) {
+      image = { mediaType: media.mime, data: media.base64 };
+      text = msg.image?.caption || '';
+    } else {
+      await sendText({
+        phoneNumberId,
+        to: from,
+        text: 'No pude abrir esa imagen. ¿Puedes reenviarla o escribirme el detalle por aquí?',
+      });
+      return;
+    }
   } else {
-    // Tipos no soportados aún (imagen, audio, ubicación…): respondemos con un aviso
-    // amable en vez de ignorar al cliente. No consume tokens del plan.
+    // Otros tipos (audio, ubicación, documento…): aviso amable. No consume tokens.
     await sendText({
       phoneNumberId,
       to: from,
-      text: 'Por ahora solo puedo leer mensajes de texto. ¿Me lo escribes por aquí?',
+      text: 'Por ahora puedo leer texto e imágenes. ¿Me lo escribes por aquí?',
     });
     return;
   }
-  if (!text.trim()) return;
+  if (!text.trim() && !image) return;
 
   // Continuar la conversación abierta de este cliente (si existe) para conservar
   // contexto y el modo de relevo (bot/manual).
@@ -120,6 +135,7 @@ async function handleMessage({ business, phoneNumberId, msg, customerName }) {
       businessId: business._id,
       business,
       message: text,
+      image,
       chatId: existing?._id,
       channel: 'whatsapp',
       customer: { phone: from, name: customerName },

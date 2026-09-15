@@ -37,5 +37,8 @@ export function sanitizeBotConfigForPlan(cfg = {}, planKey = 'free') {
     out.images = out.images.slice(0, limits.maxImages);
   }
 
+  // Documentos de contexto: solo Elite
+  if (!limits.documents) out.documents = [];
+
   return out;
 }
