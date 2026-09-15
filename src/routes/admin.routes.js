@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { requireAuth } from '../middleware/auth.middleware.js';
 import { requireAdmin } from '../middleware/role.middleware.js';
 import { validate } from '../middleware/validate.middleware.js';
-import { listAllBusinesses } from '../controllers/admin.controller.js';
+import { listAllBusinesses, getFiscalSummary } from '../controllers/admin.controller.js';
 import {
   getAdminConfig,
   updateAdminConfig,
@@ -16,6 +16,9 @@ const router = Router();
 router.use(requireAuth, requireAdmin);
 
 router.get('/businesses', listAllBusinesses);
+
+// Control fiscal (RESICO): ingresos del sitio + estimación de impuestos.
+router.get('/fiscal', getFiscalSummary);
 
 // Configuración del asistente IA del sitio (widget de soporte/guía).
 router.get('/site-assistant', getAdminConfig);
