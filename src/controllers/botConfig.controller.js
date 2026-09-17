@@ -41,6 +41,7 @@ export const updateBotConfigSchema = z.object({
     })
     .optional(),
   extraContext: z.string().max(6000).optional(),
+  quickReplies: z.array(z.string().max(300)).max(12).optional(),
   images: z.array(imageSchema).max(30).optional(),
   documents: z
     .array(

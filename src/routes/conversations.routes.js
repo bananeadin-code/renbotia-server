@@ -15,6 +15,7 @@ router.get('/templates', conversations.listBusinessTemplates); // plantillas apr
 router.get('/:id', conversations.getConversation);
 router.patch('/:id', validate(conversations.updateConversationSchema), conversations.updateConversation);
 router.post('/:id/reply', validate(conversations.replySchema), conversations.replyAsAgent);
+router.post('/:id/summary', conversations.summarizeConv);
 router.post('/:id/template', validate(conversations.templateSchema), conversations.sendTemplateReply);
 router.post('/:id/rate', validate(conversations.rateSchema), conversations.rateMessage);
 

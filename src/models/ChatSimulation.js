@@ -59,6 +59,8 @@ const chatSimulationSchema = new mongoose.Schema(
     // (cita/reservacion/pedido/prospecto), o '' si no captó ninguno. Sirve para
     // marcar en la bandeja las conversaciones que generaron trabajo.
     capturedRecordType: { type: String, default: '' },
+    // Etiquetas que el agente pone para organizar (venta, soporte, pendiente…).
+    tags: { type: [String], default: [] },
   },
   { timestamps: true }
 );

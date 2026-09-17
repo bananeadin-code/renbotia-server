@@ -53,6 +53,9 @@ const botConfigSchema = new mongoose.Schema(
       ],
       default: [],
     },
+    // Respuestas rápidas (canned) que el AGENTE inserta al responder en modo
+    // manual desde la bandeja. No las usa el bot; son atajos para la persona.
+    quickReplies: { type: [String], default: [] },
     // Elite: documentos de contexto subidos por el negocio (PDF, texto). Guardamos
     // el TEXTO ya extraído (no el archivo) como material de referencia del bot.
     documents: {

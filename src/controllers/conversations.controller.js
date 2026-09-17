@@ -5,6 +5,7 @@ import { ChatSimulation } from '../models/ChatSimulation.js';
 import { Business } from '../models/Business.js';
 import { logAudit } from '../services/audit.service.js';
 import { sendText, sendTemplate, listTemplates } from '../services/whatsapp.service.js';
+import { summarizeConversation } from '../services/conversationSummary.service.js';
 import { computeServiceWindow } from '../utils/whatsappWindow.js';
 import { toCsv } from '../utils/csv.js';
 
@@ -35,6 +36,7 @@ export const listConversations = asyncHandler(async (req, res) => {
       messageCount: c.messages.length,
       channel: c.channel || 'simulator',
       customerName: c.customerName || '',
+      tags: c.tags || [],
       // Tipo de registro de trabajo captado (cita/pedido/prospecto…) o '' si ninguno.
       capturedRecordType: c.capturedRecordType || '',
       // Ventana de 24h (solo WhatsApp; null en simulador/otros canales).
@@ -65,6 +67,7 @@ export const updateConversationSchema = z.object({
   handoffMode: z.enum(['bot', 'manual']).optional(),
   needsAttention: z.boolean().optional(),
   title: z.string().max(80).optional(), // renombrar la conversación
+  tags: z.array(z.string().max(24)).max(8).optional(), // etiquetas del agente
 });
 
 /** PATCH /api/conversations/:id — cambia el modo (bot/manual) o limpia la alerta. */
@@ -78,6 +81,10 @@ export const updateConversation = asyncHandler(async (req, res) => {
   if (req.body.title !== undefined) {
     const t = req.body.title.trim();
     if (t) chat.title = t;
+  }
+  if (req.body.tags !== undefined) {
+    // Normaliza: recorta, minúsculas, sin vacíos ni duplicados.
+    chat.tags = [...new Set(req.body.tags.map((t) => t.trim().toLowerCase()).filter(Boolean))].slice(0, 8);
   }
   await chat.save();
 
@@ -209,6 +216,12 @@ export const listBusinessTemplates = asyncHandler(async (req, res) => {
     success: true,
     data: { templates: approved, reason: result.ok ? null : 'fetch_failed' },
   });
+});
+
+/** POST /api/conversations/:id/summary — resumen con IA + respuesta sugerida. */
+export const summarizeConv = asyncHandler(async (req, res) => {
+  const data = await summarizeConversation({ businessId: req.businessId, chatId: req.params.id });
+  res.json({ success: true, data });
 });
 
 /** GET /api/conversations/export — descarga las conversaciones en CSV. */
