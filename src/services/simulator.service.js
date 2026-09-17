@@ -41,6 +41,11 @@ export async function processMessage({
 }) {
   // Texto efectivo para historial/título: si es solo imagen, un marcador legible.
   const userText = (message || '').trim() || (image ? '(imagen del cliente)' : '');
+  // Imagen entrante guardada en el mensaje (para VERLA en la bandeja). No se
+  // reenvía en el historial a Claude (solo va en el turno actual, ver más abajo).
+  const inboundImages = image
+    ? [{ label: 'Imagen del cliente', url: `data:${image.mediaType};base64,${image.data}` }]
+    : undefined;
   // 1) Suscripción + reseteo perezoso + verificación de créditos
   const subscription = await Subscription.findOne({ business: businessId }).populate('plan');
   if (!subscription) {
@@ -96,7 +101,7 @@ export async function processMessage({
   // respuesta la dará la persona desde la bandeja de Conversaciones. No consume
   // tokens ni llama a la IA.
   if (chat.handoffMode === 'manual') {
-    chat.messages.push({ role: 'user', content: userText, timestamp: new Date() });
+    chat.messages.push({ role: 'user', content: userText, images: inboundImages, timestamp: new Date() });
     await chat.save();
     return {
       reply: null,
@@ -236,7 +241,7 @@ export async function processMessage({
   // 8) Persistir mensajes en la conversación
   const now = new Date();
   const promptTokens = inputTokens + cacheReadTokens + cacheCreationTokens;
-  chat.messages.push({ role: 'user', content: userText, tokens: promptTokens, timestamp: now });
+  chat.messages.push({ role: 'user', content: userText, images: inboundImages, tokens: promptTokens, timestamp: now });
   chat.messages.push({
     role: 'assistant',
     content: text,
@@ -250,6 +255,10 @@ export async function processMessage({
   if (escalation.flagged) {
     chat.needsAttention = true;
     chat.attentionReason = escalation.reason;
+  }
+  // Si captó un registro de trabajo, lo marca en la conversación (para la bandeja).
+  if (createdRecords.length) {
+    chat.capturedRecordType = createdRecords[createdRecords.length - 1].type || chat.capturedRecordType;
   }
   await chat.save();
 

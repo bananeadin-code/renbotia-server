@@ -55,6 +55,10 @@ const chatSimulationSchema = new mongoose.Schema(
     // El bot marcó la conversación para que la atienda una persona.
     needsAttention: { type: Boolean, default: false },
     attentionReason: { type: String, default: '' },
+    // Tipo del ÚLTIMO registro de trabajo captado en esta conversación
+    // (cita/reservacion/pedido/prospecto), o '' si no captó ninguno. Sirve para
+    // marcar en la bandeja las conversaciones que generaron trabajo.
+    capturedRecordType: { type: String, default: '' },
   },
   { timestamps: true }
 );

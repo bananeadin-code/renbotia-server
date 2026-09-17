@@ -34,6 +34,9 @@ export const listConversations = asyncHandler(async (req, res) => {
       attentionReason: c.attentionReason || '',
       messageCount: c.messages.length,
       channel: c.channel || 'simulator',
+      customerName: c.customerName || '',
+      // Tipo de registro de trabajo captado (cita/pedido/prospecto…) o '' si ninguno.
+      capturedRecordType: c.capturedRecordType || '',
       // Ventana de 24h (solo WhatsApp; null en simulador/otros canales).
       whatsappWindow: computeServiceWindow(c),
     };
@@ -61,6 +64,7 @@ export const getConversation = asyncHandler(async (req, res) => {
 export const updateConversationSchema = z.object({
   handoffMode: z.enum(['bot', 'manual']).optional(),
   needsAttention: z.boolean().optional(),
+  title: z.string().max(80).optional(), // renombrar la conversación
 });
 
 /** PATCH /api/conversations/:id — cambia el modo (bot/manual) o limpia la alerta. */
@@ -71,6 +75,10 @@ export const updateConversation = asyncHandler(async (req, res) => {
   const prevMode = chat.handoffMode;
   if (req.body.handoffMode !== undefined) chat.handoffMode = req.body.handoffMode;
   if (req.body.needsAttention !== undefined) chat.needsAttention = req.body.needsAttention;
+  if (req.body.title !== undefined) {
+    const t = req.body.title.trim();
+    if (t) chat.title = t;
+  }
   await chat.save();
 
   if (req.body.handoffMode !== undefined && req.body.handoffMode !== prevMode) {
