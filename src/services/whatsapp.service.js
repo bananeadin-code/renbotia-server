@@ -22,6 +22,29 @@ export function isConfigured() {
 }
 
 /**
+ * Lee los datos del número conectado: el NÚMERO visible (display_phone_number) y
+ * el nombre verificado. Para mostrar en Conexiones/Perfil cuál número usa el bot.
+ * @returns {Promise<{ ok: boolean, displayPhoneNumber?: string, verifiedName?: string, error?: string }>}
+ */
+export async function getPhoneNumberInfo(phoneNumberId) {
+  const id = phoneNumberId || env.whatsapp.phoneNumberId;
+  if (!isConfigured() || !id) return { ok: false, error: 'not_configured' };
+  const url = `${GRAPH}/${env.whatsapp.apiVersion}/${id}?fields=display_phone_number,verified_name`;
+  try {
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${env.whatsapp.token}` } });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      logger.warn(`WhatsApp: no se pudo leer el número (${res.status}): ${JSON.stringify(data?.error || data)}`);
+      return { ok: false, error: data?.error?.message || `HTTP ${res.status}` };
+    }
+    return { ok: true, displayPhoneNumber: data.display_phone_number || '', verifiedName: data.verified_name || '' };
+  } catch (err) {
+    logger.warn(`WhatsApp: error de red al leer el número: ${err.message}`);
+    return { ok: false, error: err.message };
+  }
+}
+
+/**
  * Descarga un archivo (media) que el cliente envió por WhatsApp. Son 2 pasos:
  * (1) pedir la URL temporal del media por su id, (2) bajar los bytes con el token.
  * Devuelve base64 + mime para pasarlo a la visión de Claude. Tope ~5MB.

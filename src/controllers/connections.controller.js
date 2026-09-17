@@ -15,6 +15,7 @@ import {
   setBusinessProfilePhoto,
   createTemplate,
   listTemplates,
+  getPhoneNumberInfo,
 } from '../services/whatsapp.service.js';
 import { logAudit } from '../services/audit.service.js';
 
@@ -42,6 +43,20 @@ export const getConnections = asyncHandler(async (req, res) => {
   const business = await Business.findById(req.businessId).select(
     'whatsappPhoneNumberId whatsappWabaId whatsappVerified'
   );
+
+  // Si está conectado, leemos el número visible y el nombre verificado (para
+  // mostrar cuál número usa el bot, no solo el id). Best-effort: si falla, se
+  // muestra solo el id.
+  let phoneNumber = '';
+  let verifiedName = '';
+  if (business?.whatsappPhoneNumberId) {
+    const info = await getPhoneNumberInfo(business.whatsappPhoneNumberId);
+    if (info.ok) {
+      phoneNumber = info.displayPhoneNumber;
+      verifiedName = info.verifiedName;
+    }
+  }
+
   res.json({
     success: true,
     data: {
@@ -56,6 +71,8 @@ export const getConnections = asyncHandler(async (req, res) => {
         connected: Boolean(business?.whatsappPhoneNumberId),
         phoneNumberId: business?.whatsappPhoneNumberId || '',
         wabaId: business?.whatsappWabaId || '',
+        phoneNumber,
+        verifiedName,
       },
     },
   });
