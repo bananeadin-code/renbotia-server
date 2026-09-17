@@ -61,6 +61,13 @@ const chatSimulationSchema = new mongoose.Schema(
     capturedRecordType: { type: String, default: '' },
     // Etiquetas que el agente pone para organizar (venta, soporte, pendiente…).
     tags: { type: [String], default: [] },
+    // Lead caliente: el bot detectó ALTA intención de compra/contratación (el
+    // cliente está listo o muy interesado). Se resalta en la bandeja para dar
+    // seguimiento prioritario. Es una OPORTUNIDAD de venta — distinto de
+    // needsAttention (queja/urgencia/algo que el bot no resolvió).
+    hotLead: { type: Boolean, default: false },
+    hotLeadReason: { type: String, default: '' },
+    hotLeadAt: { type: Date, default: null },
   },
   { timestamps: true }
 );

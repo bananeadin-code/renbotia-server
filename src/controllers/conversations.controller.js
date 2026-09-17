@@ -39,6 +39,9 @@ export const listConversations = asyncHandler(async (req, res) => {
       tags: c.tags || [],
       // Tipo de registro de trabajo captado (cita/pedido/prospecto…) o '' si ninguno.
       capturedRecordType: c.capturedRecordType || '',
+      // Lead caliente: el bot detectó alta intención de compra (oportunidad).
+      hotLead: Boolean(c.hotLead),
+      hotLeadReason: c.hotLeadReason || '',
       // Ventana de 24h (solo WhatsApp; null en simulador/otros canales).
       whatsappWindow: computeServiceWindow(c),
     };
@@ -49,6 +52,7 @@ export const listConversations = asyncHandler(async (req, res) => {
     data: {
       conversations,
       needAttention: conversations.filter((c) => c.needsAttention).length,
+      hotLeads: conversations.filter((c) => c.hotLead).length,
     },
   });
 });
@@ -68,6 +72,7 @@ export const updateConversationSchema = z.object({
   needsAttention: z.boolean().optional(),
   title: z.string().max(80).optional(), // renombrar la conversación
   tags: z.array(z.string().max(24)).max(8).optional(), // etiquetas del agente
+  hotLead: z.boolean().optional(), // marcar/atender el lead caliente (el agente lo cierra)
 });
 
 /** PATCH /api/conversations/:id — cambia el modo (bot/manual) o limpia la alerta. */
@@ -85,6 +90,13 @@ export const updateConversation = asyncHandler(async (req, res) => {
   if (req.body.tags !== undefined) {
     // Normaliza: recorta, minúsculas, sin vacíos ni duplicados.
     chat.tags = [...new Set(req.body.tags.map((t) => t.trim().toLowerCase()).filter(Boolean))].slice(0, 8);
+  }
+  if (req.body.hotLead !== undefined) {
+    // El agente cierra/reabre el lead caliente manualmente (p. ej. tras darle
+    // seguimiento). Al cerrarlo se limpia el motivo; al marcarlo se fija la fecha.
+    chat.hotLead = req.body.hotLead;
+    if (!req.body.hotLead) chat.hotLeadReason = '';
+    else if (!chat.hotLeadAt) chat.hotLeadAt = new Date();
   }
   await chat.save();
 

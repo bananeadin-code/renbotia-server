@@ -9,10 +9,10 @@ import { generateReply, generateReplyWithTools } from './claude.service.js';
 import { applyLazyReset, hasBalance, deductTokens, computeBalance } from './token.service.js';
 import { buildTools, executeTool as runManagementTool } from './managementTools.service.js';
 import { usableImages, buildImageTool, executeImageTool } from './imageTools.service.js';
-import { buildEscalationTool } from './handoffTools.service.js';
+import { buildEscalationTool, buildHotLeadTool } from './handoffTools.service.js';
 import { maybeAutoRecharge } from './autoRecharge.service.js';
 import { maybeNotifyLowBalance } from './lowBalance.service.js';
-import { sendEscalationEmail } from './email.service.js';
+import { sendEscalationEmail, sendHotLeadEmail } from './email.service.js';
 import { sanitizeBotConfigForPlan } from '../utils/planGating.js';
 import { logger } from '../utils/logger.js';
 
@@ -150,9 +150,9 @@ export async function processMessage({
       : userText;
   const claudeMessages = [...history, { role: 'user', content: currentContent }];
 
-  // 6) Herramientas disponibles: gestión (citas/pedidos…), imágenes del bot y
-  //    la escalación a humano (esta última para TODOS los planes).
-  const tools = [buildEscalationTool()];
+  // 6) Herramientas disponibles: gestión (citas/pedidos…), imágenes del bot, la
+  //    escalación a humano y la detección de lead caliente (estas dos, TODOS los planes).
+  const tools = [buildEscalationTool(), buildHotLeadTool()];
   if (managementConfig) tools.push(...buildTools(managementConfig));
   if (imagesForBot.length) tools.push(buildImageTool(imagesForBot));
 
@@ -160,6 +160,7 @@ export async function processMessage({
   const createdRecords = [];
   const sentImages = []; // imágenes que el bot envió en este turno (para renderizarlas)
   const escalation = { flagged: false, reason: '' }; // el bot pidió atención humana
+  const hotLead = { flagged: false, reason: '' }; // el bot detectó alta intención de compra
 
   try {
     if (tools.length) {
@@ -174,6 +175,16 @@ export async function processMessage({
             mensaje:
               'Conversación marcada para que la atienda una persona. Dile al cliente con cortesía ' +
               'que en un momento lo atenderá alguien del equipo.',
+          };
+        }
+        if (name === 'marcar_lead_caliente') {
+          hotLead.flagged = true;
+          hotLead.reason = input?.motivo || '';
+          return {
+            ok: true,
+            mensaje:
+              'Anotado como lead con alta intención para dar seguimiento. Sigue atendiendo al ' +
+              'cliente con normalidad, sin mencionarle esta marca.',
           };
         }
         if (name === 'enviar_imagen') {
@@ -260,6 +271,14 @@ export async function processMessage({
   if (createdRecords.length) {
     chat.capturedRecordType = createdRecords[createdRecords.length - 1].type || chat.capturedRecordType;
   }
+  // Lead caliente: marca la conversación como oportunidad de venta (fija la fecha
+  // solo la PRIMERA vez, para saber cuándo se detectó).
+  const wasHot = chat.hotLead;
+  if (hotLead.flagged) {
+    chat.hotLead = true;
+    chat.hotLeadReason = hotLead.reason;
+    if (!wasHot) chat.hotLeadAt = new Date();
+  }
   await chat.save();
 
   // Aviso por correo al dueño cuando escala por PRIMERA vez (wasFlagged=false) y
@@ -270,7 +289,19 @@ export async function processMessage({
       businessName: business?.name,
       reason: escalation.reason,
       contactName: chat.customerName || '',
-      preview: message.slice(0, 160),
+      preview: userText.slice(0, 160),
+    });
+  }
+
+  // Aviso de LEAD CALIENTE: cuando el bot detecta alta intención por PRIMERA vez
+  // (wasHot=false) y es un canal REAL. Fire-and-forget — no bloquea la respuesta.
+  if (hotLead.flagged && !wasHot && source !== 'simulator') {
+    void sendHotLeadEmail({
+      userId: business?.owner,
+      businessName: business?.name,
+      reason: hotLead.reason,
+      contactName: chat.customerName || '',
+      preview: userText.slice(0, 160),
     });
   }
 
@@ -296,5 +327,6 @@ export async function processMessage({
     createdRecords,
     sentImages, // imágenes reales que el bot adjuntó (para renderizarlas en el chat)
     escalated: escalation.flagged, // el bot pidió que atienda una persona
+    hotLead: hotLead.flagged, // el bot detectó alta intención de compra
   };
 }
