@@ -6,6 +6,7 @@ import { passwordResetEmail } from '../emails/passwordReset.js';
 import { welcomeEmail } from '../emails/welcome.js';
 import { escalationEmail } from '../emails/escalation.js';
 import { hotLeadEmail } from '../emails/hotLead.js';
+import { contactEmail } from '../emails/contact.js';
 import { User } from '../models/User.js';
 
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
@@ -18,7 +19,7 @@ const RESEND_ENDPOINT = 'https://api.resend.com/emails';
  * @param {{ to: string, subject: string, html: string }} msg
  * @returns {Promise<{ ok?: boolean, skipped?: boolean, id?: string, status?: number, error?: string }>}
  */
-export async function sendEmail({ to, subject, html }) {
+export async function sendEmail({ to, subject, html, replyTo }) {
   if (!env.resend.apiKey) {
     logger.warn('[email] RESEND_API_KEY no configurada; se omite el envío.');
     return { skipped: true };
@@ -27,6 +28,10 @@ export async function sendEmail({ to, subject, html }) {
     logger.warn('[email] Sin destinatario; se omite el envío.');
     return { skipped: true };
   }
+
+  // reply_to: el que se pase explícito (p. ej. el correo de quien escribe en el
+  // formulario de contacto) tiene prioridad sobre el global de env.
+  const replyToAddr = replyTo || env.resend.replyTo;
 
   try {
     const res = await fetch(RESEND_ENDPOINT, {
@@ -40,7 +45,7 @@ export async function sendEmail({ to, subject, html }) {
         to: [to],
         subject,
         html,
-        ...(env.resend.replyTo ? { reply_to: env.resend.replyTo } : {}),
+        ...(replyToAddr ? { reply_to: replyToAddr } : {}),
       }),
     });
 
@@ -56,6 +61,22 @@ export async function sendEmail({ to, subject, html }) {
     logger.warn(`[email] Error enviando a ${to}: ${err.message}`);
     return { ok: false, error: err.message };
   }
+}
+
+/**
+ * Envía un mensaje del formulario de contacto público a tu buzón (env.contactInbox),
+ * vía Resend (saliente, no depende del reenvío entrante del dominio). El reply_to
+ * es el correo de quien escribe, para responderle directo. Fail-open.
+ * @param {{ name:string, email:string, topic?:string, message:string }} p
+ */
+export async function sendContactEmail(p) {
+  const to = env.contactInbox || env.resend.replyTo;
+  if (!to) {
+    logger.warn('[email] CONTACT_INBOX no configurado; no hay a dónde enviar el contacto.');
+    return { skipped: true };
+  }
+  const { subject, html } = contactEmail(p);
+  return sendEmail({ to, subject, html, replyTo: p.email });
 }
 
 /**

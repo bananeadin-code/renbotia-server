@@ -15,6 +15,7 @@ import adminRoutes from './admin.routes.js';
 import demoRoutes from './demo.routes.js';
 import siteAssistantRoutes from './siteAssistant.routes.js';
 import waitlistRoutes from './waitlist.routes.js';
+import contactRoutes from './contact.routes.js';
 import memberRoutes from './members.routes.js';
 import conversationRoutes from './conversations.routes.js';
 import connectionRoutes from './connections.routes.js';
@@ -51,6 +52,7 @@ router.use('/simulator', simulatorRoutes);
 router.use('/demo', demoRoutes); // público (sin auth): demo de la landing
 router.use('/site-assistant', siteAssistantRoutes); // público: asistente del sitio (widget)
 router.use('/waitlist', waitlistRoutes); // público: lista de espera de planes de pago
+router.use('/contact', contactRoutes); // público: formulario de contacto
 router.use('/billing', billingRoutes);
 router.use('/management', managementRoutes);
 router.use('/conversations', conversationRoutes);

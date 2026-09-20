@@ -41,6 +41,21 @@ export const simulatorLimiter = rateLimit({
 });
 
 /**
+ * contactLimiter: formulario de contacto PÚBLICO. Estricto para cortar spam de
+ * bots sin molestar a una persona real (5 envíos por IP cada 15 min).
+ */
+export const contactLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Recibimos varios mensajes tuyos. Espera un momento antes de enviar otro.',
+  },
+});
+
+/**
  * demoLimiter: la demo PÚBLICA (sin registro) llama a Claude, que cuesta dinero.
  * Límite estricto por IP para permitir probarla de verdad pero cortar el abuso.
  */

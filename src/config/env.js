@@ -78,6 +78,11 @@ export const env = {
   // URL pública del sitio para enlaces dentro de los emails.
   publicUrl: process.env.PUBLIC_URL || process.env.CLIENT_URL || 'http://localhost:5173',
 
+  // Buzón donde caen los mensajes del formulario de contacto público. Se envía
+  // vía Resend (saliente, NO depende del reenvío entrante del dominio). Cae a
+  // EMAIL_REPLY_TO o al remitente si no se define. Ponlo a tu correo real en Render.
+  contactInbox: process.env.CONTACT_INBOX || process.env.EMAIL_REPLY_TO || '',
+
   // Envío de SMS (para verificar el número por código). Requiere un proveedor
   // como Twilio. Sin credenciales, la verificación por SMS se OCULTA en el panel
   // (el número se confirma al conectar WhatsApp con Meta).
