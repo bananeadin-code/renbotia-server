@@ -56,12 +56,12 @@ const MAX_OUTPUT_TOKENS = 500; // respuestas cortas estilo WhatsApp
  * @param {Array<{role:'user'|'assistant', content:string}>} params.messages - historial
  * @returns {Promise<{ text: string, inputTokens: number, outputTokens: number, totalTokens: number }>}
  */
-export async function generateReply({ system, messages }) {
+export async function generateReply({ system, messages, model }) {
   const anthropic = getClient();
 
   try {
     const response = await anthropic.messages.create({
-      model: env.anthropic.model,
+      model: model || env.anthropic.model,
       max_tokens: MAX_OUTPUT_TOKENS,
       // Un solo caché de config+entrenamiento (system prompt), estable entre
       // mensajes. TTL 1h: persiste casi toda la sesión y se reconstruye solo al
@@ -142,7 +142,7 @@ const MAX_TOOL_ROUNDS = 5; // tope de seguridad para el loop agéntico
  * @param {(name:string, input:object)=>Promise<object>} params.executeTool
  * @returns {Promise<{ text, ...usage, toolCalls }>}
  */
-export async function generateReplyWithTools({ system, messages, tools, executeTool }) {
+export async function generateReplyWithTools({ system, messages, tools, executeTool, model }) {
   const anthropic = getClient();
 
   const convo = [...messages];
@@ -158,7 +158,7 @@ export async function generateReplyWithTools({ system, messages, tools, executeT
   try {
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       const response = await anthropic.messages.create({
-        model: env.anthropic.model,
+        model: model || env.anthropic.model,
         max_tokens: MAX_OUTPUT_TOKENS,
         system: [{ type: 'text', text: system, cache_control: SYSTEM_CACHE_CONTROL }],
         tools,

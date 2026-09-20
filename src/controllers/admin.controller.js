@@ -24,8 +24,10 @@ export const listAllBusinesses = asyncHandler(async (req, res) => {
     Subscription.find().populate('plan', 'name key monthlyTokenLimit').lean(),
     UsageLog.aggregate([
       {
+        // Agrupamos por negocio Y modelo para estimar el costo con el precio real
+        // de cada modelo (Haiku/Sonnet), ahora que cada plan corre en uno distinto.
         $group: {
-          _id: '$business',
+          _id: { business: '$business', model: '$model' },
           // Reales (para costo)
           inputTokens: notSim('inputTokens'),
           outputTokens: notSim('outputTokens'),
@@ -41,13 +43,25 @@ export const listAllBusinesses = asyncHandler(async (req, res) => {
   ]);
 
   const subByBusiness = new Map(subscriptions.map((s) => [String(s.business), s]));
-  const usageMap = new Map(usageByBusiness.map((u) => [String(u._id), u]));
+
+  // Consolida las filas (negocio × modelo) en un acumulado por negocio, sumando
+  // el costo real estimado con el precio de CADA modelo.
+  const usageMap = new Map();
+  for (const g of usageByBusiness) {
+    const key = String(g._id.business);
+    const acc = usageMap.get(key) || { realTokens: 0, demoTokens: 0, realRequests: 0, costUsd: 0 };
+    acc.realTokens += g.realTokens || 0;
+    acc.demoTokens += g.demoTokens || 0;
+    acc.realRequests += g.realRequests || 0;
+    acc.costUsd += estimateCostUSD(g, g._id.model);
+    usageMap.set(key, acc);
+  }
 
   const rows = businesses.map((b) => {
     const sub = subByBusiness.get(String(b._id));
     const usage = usageMap.get(String(b._id));
-    // El costo se estima SOLO con los tokens reales.
-    const costUsd = usage ? estimateCostUSD(usage) : 0;
+    // El costo ya viene estimado por modelo (sumado arriba).
+    const costUsd = usage ? usage.costUsd : 0;
     return {
       id: b._id,
       name: b.name,

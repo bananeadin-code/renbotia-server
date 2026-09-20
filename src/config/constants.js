@@ -147,6 +147,32 @@ export const PRICING = {
   cacheReadPerM: 0.3, // 0.1x input
 };
 
+/**
+ * Modelo de Claude por plan (palanca de margen). Free/Pro usan Haiku 4.5, más
+ * barato y rápido, suficiente para FAQs y atención por WhatsApp (no usan visión
+ * ni herramientas de gestión). Elite usa Sonnet 5, más capaz, para visión de
+ * imágenes y el módulo de Gestión (agendar/pedidos con tool use). El fallback es
+ * el modelo de env (CLAUDE_MODEL) por si un plan no está mapeado.
+ */
+export const MODEL_BY_PLAN = {
+  free: 'claude-haiku-4-5',
+  pro: 'claude-haiku-4-5',
+  elite: 'claude-sonnet-5',
+};
+
+/**
+ * Precios reales por modelo (USD/millón), para estimar el costo por negocio con
+ * exactitud en el panel de admin ahora que cada plan corre en un modelo distinto.
+ * Caché a TTL 1h: escritura 2× input, lectura 0.1× input.
+ *  - Haiku 4.5:  $1 in / $5 out
+ *  - Sonnet 5:   $2 in / $10 out
+ * Si no hay modelo en el log (registros viejos), se usa PRICING (conservador).
+ */
+export const PRICING_BY_MODEL = {
+  'claude-haiku-4-5': { inputPerM: 1.0, outputPerM: 5.0, cacheWritePerM: 2.0, cacheReadPerM: 0.1 },
+  'claude-sonnet-5': { inputPerM: 2.0, outputPerM: 10.0, cacheWritePerM: 4.0, cacheReadPerM: 0.2 },
+};
+
 // Tipo de cambio aproximado para mostrar el costo también en MXN.
 export const USD_TO_MXN = 18;
 

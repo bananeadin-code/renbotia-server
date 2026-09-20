@@ -14,6 +14,8 @@ import { maybeAutoRecharge } from './autoRecharge.service.js';
 import { maybeNotifyLowBalance } from './lowBalance.service.js';
 import { sendEscalationEmail, sendHotLeadEmail } from './email.service.js';
 import { sanitizeBotConfigForPlan } from '../utils/planGating.js';
+import { MODEL_BY_PLAN } from '../config/constants.js';
+import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 
 // Cuántos mensajes previos enviar como contexto a Claude (ventana deslizante).
@@ -79,6 +81,9 @@ export async function processMessage({
   // personalidad ni contexto ampliado). No basta con sanear solo al guardar.
   const planKey = subscription.plan?.key || 'free';
   const safeConfig = sanitizeBotConfigForPlan(botConfig.toObject(), planKey);
+  // Modelo por plan: Free/Pro en Haiku (barato y rápido), Elite en Sonnet (más
+  // capaz, para visión y el módulo de Gestión con herramientas).
+  const model = MODEL_BY_PLAN[planKey] || env.anthropic.model;
 
   // 3) Cargar o crear la conversación (aislada por tenant)
   let chat;
@@ -210,10 +215,10 @@ export async function processMessage({
         return result;
       };
       ({ text, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, totalTokens, billableTokens } =
-        await generateReplyWithTools({ system, messages: claudeMessages, tools, executeTool }));
+        await generateReplyWithTools({ system, messages: claudeMessages, tools, executeTool, model }));
     } else {
       ({ text, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, totalTokens, billableTokens } =
-        await generateReply({ system, messages: claudeMessages }));
+        await generateReply({ system, messages: claudeMessages, model }));
     }
   } catch (err) {
     // Un 503 es un problema de CONFIGURACIÓN (p. ej. API key inválida): debe verlo
@@ -314,6 +319,7 @@ export async function processMessage({
     cacheReadTokens,
     cacheCreationTokens,
     totalTokens,
+    model,
     source,
   });
 

@@ -4,6 +4,8 @@ import { UsageLog } from '../models/UsageLog.js';
 import { ApiError } from '../utils/ApiError.js';
 import { generateReply } from './claude.service.js';
 import { applyLazyReset, hasBalance, deductTokens, computeBalance } from './token.service.js';
+import { MODEL_BY_PLAN } from '../config/constants.js';
+import { env } from '../config/env.js';
 
 /**
  * Resumen de una conversación con IA para el agente: qué quiere el cliente + una
@@ -39,9 +41,12 @@ export async function summarizeConversation({ businessId, chatId }) {
     .join('\n')
     .slice(-6000);
 
+  // Mismo modelo que atiende el plan (Haiku para Free/Pro, Sonnet para Elite).
+  const model = MODEL_BY_PLAN[subscription.plan?.key || 'free'] || env.anthropic.model;
   const result = await generateReply({
     system: SUMMARY_SYSTEM,
     messages: [{ role: 'user', content: `Resume esta conversación y sugiere una respuesta:\n\n${transcript}` }],
+    model,
   });
 
   // Descuenta el consumo (uso de IA) y registra el costo real.
@@ -55,6 +60,7 @@ export async function summarizeConversation({ businessId, chatId }) {
     cacheReadTokens: result.cacheReadTokens,
     cacheCreationTokens: result.cacheCreationTokens,
     totalTokens: result.totalTokens,
+    model,
     source: 'summary',
   });
 
