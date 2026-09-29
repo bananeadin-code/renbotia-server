@@ -454,6 +454,16 @@ export const getBillingConfig = asyncHandler(async (req, res) => {
 });
 
 /**
+ * GET /api/billing/public-config — versión PÚBLICA (sin auth) para las páginas de
+ * marketing (Precios): solo expone si los planes de pago ya se pueden comprar,
+ * para no dejar "Próximamente" a los visitantes sin sesión. No revela secretos.
+ */
+export const getPublicBillingConfig = asyncHandler(async (req, res) => {
+  const hasLiveKey = String(env.stripe.secretKey || '').startsWith('sk_live_');
+  res.json({ success: true, data: { paidPlansLive: hasLiveKey && !env.betaMode } });
+});
+
+/**
  * POST /api/billing/setup-intent
  * Crea (o reutiliza) el Customer de Stripe y un SetupIntent para guardar una
  * tarjeta desde Elements. Devuelve el clientSecret que el navegador confirma.

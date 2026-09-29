@@ -6,6 +6,9 @@ import * as billing from '../controllers/billing.controller.js';
 
 const router = Router();
 
+// PÚBLICO (sin auth): estado de disponibilidad de planes, para la página de Precios.
+router.get('/public-config', billing.getPublicBillingConfig);
+
 // Solo el DUEÑO gestiona pagos/plan (los colaboradores no tocan facturación).
 const ownerOnly = [requireBusiness, requireBusinessRole('owner')];
 
