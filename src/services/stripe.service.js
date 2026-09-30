@@ -82,7 +82,9 @@ export async function createPaymentIntent({
     currency: 'mxn',
     description,
     metadata,
-    automatic_payment_methods: { enabled: true, allow_redirects: 'never' },
+    // Solo tarjeta: evita que Stripe muestre "Link" (checkout acelerado) y otros
+    // métodos con redirección. Consistente con el resto de intents del servicio.
+    payment_method_types: ['card'],
   };
   if (customerId) params.customer = customerId;
   if (paymentMethodId) {
