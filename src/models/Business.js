@@ -19,6 +19,9 @@ const businessSchema = new mongoose.Schema(
       required: [true, 'El nombre del negocio es obligatorio'],
       trim: true,
     },
+    // Foto/avatar del negocio (data URI de imagen comprimida) que reemplaza el
+    // avatar con la inicial en el panel. Vacío = usa la inicial.
+    photo: { type: String, default: '' },
     industry: {
       type: String,
       enum: ['legal', 'contable', 'consultoria', 'agencia', 'otro'],

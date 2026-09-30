@@ -16,6 +16,13 @@ export const updateBusinessSchema = z.object({
   industry: z.enum(['legal', 'contable', 'consultoria', 'agencia', 'otro']).optional(),
   industryOther: z.string().max(60).optional(),
   whatsappNumber: z.string().max(30).optional(),
+  // Foto del negocio: data URI de imagen comprimida (o '' para quitarla). Tope de
+  // tamaño para no inflar el documento (el cliente la reduce antes de subir).
+  photo: z
+    .string()
+    .max(200_000, 'La imagen es muy grande.')
+    .refine((v) => v === '' || /^data:image\/(png|jpe?g|webp);base64,/.test(v), 'Formato de imagen no válido.')
+    .optional(),
 });
 
 /**
@@ -204,14 +211,14 @@ export const verifyWhatsapp = asyncHandler(async (req, res) => {
  * requiere auth (NO requireBusiness), porque alimenta el switcher de proyectos.
  */
 export const listMyProjects = asyncHandler(async (req, res) => {
-  const owned = await Business.findOne({ owner: req.userId }).select('name').lean();
+  const owned = await Business.findOne({ owner: req.userId }).select('name photo').lean();
   const collabs = await Membership.find({ user: req.userId, role: 'colaborador' })
-    .populate('business', 'name')
+    .populate('business', 'name photo')
     .lean();
 
   const projects = [];
   if (owned) {
-    projects.push({ id: String(owned._id), name: owned.name || 'Mi negocio', role: 'owner' });
+    projects.push({ id: String(owned._id), name: owned.name || 'Mi negocio', role: 'owner', photo: owned.photo || '' });
   }
   for (const m of collabs) {
     if (m.business) {
@@ -219,6 +226,7 @@ export const listMyProjects = asyncHandler(async (req, res) => {
         id: String(m.business._id),
         name: m.business.name || 'Proyecto',
         role: 'colaborador',
+        photo: m.business.photo || '',
       });
     }
   }
