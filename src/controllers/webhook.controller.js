@@ -4,6 +4,7 @@ import { Business } from '../models/Business.js';
 import { ChatSimulation } from '../models/ChatSimulation.js';
 import { processMessage } from '../services/simulator.service.js';
 import { verifySignature, sendText, sendImage, downloadMedia } from '../services/whatsapp.service.js';
+import { sendMessengerText } from '../services/messenger.service.js';
 
 /**
  * Webhook de WhatsApp Cloud API (Meta).
@@ -57,8 +58,17 @@ export function receiveWebhook(req, res) {
   );
 }
 
-/** Procesa el payload: por cada mensaje de texto, corre el bot y responde. */
+/**
+ * Despacha el webhook según su origen. La MISMA URL recibe eventos de WhatsApp y
+ * de Páginas de Facebook (Messenger); se distinguen por `payload.object`.
+ */
 async function processInbound(payload) {
+  if (payload?.object === 'page') return processMessengerInbound(payload);
+  return processWhatsAppInbound(payload);
+}
+
+/** WhatsApp: por cada mensaje de texto/imagen, corre el bot y responde. */
+async function processWhatsAppInbound(payload) {
   if (payload?.object !== 'whatsapp_business_account') return;
 
   for (const entry of payload.entry || []) {
@@ -166,5 +176,82 @@ async function handleMessage({ business, phoneNumberId, msg, customerName }) {
       return;
     }
     logger.error(`WhatsApp: fallo al procesar mensaje de ${from}: ${err.message}`);
+  }
+}
+
+/* ── Facebook Messenger ───────────────────────────────────────────────────────
+   Mismo webhook, payload distinto: entry[].messaging[] con sender.id (PSID) y
+   message.text. Se enruta al negocio por el id de la Página (entry.id). */
+
+async function processMessengerInbound(payload) {
+  for (const entry of payload.entry || []) {
+    const pageId = entry.id;
+    if (!pageId) continue;
+    // El token de Página es select:false; lo pedimos explícito para poder responder.
+    const business = await Business.findOne({ facebookPageId: pageId }).select('+facebookPageToken');
+    if (!business) {
+      logger.warn(`Messenger: evento para la página ${pageId} sin negocio asociado.`);
+      continue;
+    }
+    for (const event of entry.messaging || []) {
+      await handleMessengerMessage({ business, event });
+    }
+  }
+}
+
+async function handleMessengerMessage({ business, event }) {
+  const msg = event.message;
+  // Ignorar ecos (lo que envía la propia página) y eventos sin mensaje (entregas,
+  // lecturas, postbacks). Dedupe por mid.
+  if (!msg || msg.is_echo) return;
+  if (alreadyProcessed(msg.mid)) return;
+
+  const senderId = event.sender?.id; // PSID del cliente
+  if (!senderId) return;
+
+  const pageToken = business.facebookPageToken;
+  const text = (msg.text || '').trim();
+  if (!text) {
+    // Adjuntos (imágenes, stickers…): por ahora solo texto en Messenger.
+    if (msg.attachments?.length) {
+      await sendMessengerText({
+        pageToken,
+        recipientId: senderId,
+        text: 'Por ahora puedo leer texto por aquí. ¿Me escribes tu duda?',
+      });
+    }
+    return;
+  }
+
+  // Continuar la conversación abierta de este cliente (por PSID).
+  const existing = await ChatSimulation.findOne({
+    business: business._id,
+    channel: 'facebook',
+    customerId: senderId,
+  }).sort({ updatedAt: -1 });
+
+  try {
+    const result = await processMessage({
+      businessId: business._id,
+      business,
+      message: text,
+      chatId: existing?._id,
+      channel: 'facebook',
+      customer: { id: senderId },
+      source: 'facebook',
+    });
+
+    if (result?.paused) return; // modo manual: responde una persona desde la bandeja
+    if (result?.reply) {
+      await sendMessengerText({ pageToken, recipientId: senderId, text: result.reply });
+    }
+    // Las imágenes del bot (data URI) aún no se envían por Messenger (requieren
+    // subir el adjunto a Meta); se omiten sin romper el flujo.
+  } catch (err) {
+    if (err.statusCode === 402) {
+      logger.warn(`Messenger: negocio ${business._id} sin créditos; mensaje no atendido.`);
+      return;
+    }
+    logger.error(`Messenger: fallo al procesar mensaje de ${senderId}: ${err.message}`);
   }
 }

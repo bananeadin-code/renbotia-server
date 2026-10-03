@@ -64,6 +64,13 @@ const businessSchema = new mongoose.Schema(
       trim: true,
       default: '',
     },
+    // ── Facebook Messenger (Fase 3 multicanal) ──────────────────────────────
+    // Página de Facebook conectada: su id enruta el webhook, y el token de Página
+    // (sensible → select:false, no sale en consultas normales) se usa para enviar.
+    facebookPageId: { type: String, trim: true, default: '', index: true },
+    facebookPageName: { type: String, trim: true, default: '' },
+    facebookPageToken: { type: String, default: '', select: false },
+    facebookConnectedAt: { type: Date, default: null },
     status: {
       type: String,
       enum: Object.values(BUSINESS_STATUS),
@@ -86,6 +93,12 @@ businessSchema.index(
 businessSchema.index(
   { whatsappPhoneNumberId: 1 },
   { unique: true, partialFilterExpression: { whatsappPhoneNumberId: { $type: 'string', $gt: '' } } }
+);
+
+// Una Página de Facebook pertenece a un único negocio (mismo patrón que WhatsApp).
+businessSchema.index(
+  { facebookPageId: 1 },
+  { unique: true, partialFilterExpression: { facebookPageId: { $type: 'string', $gt: '' } } }
 );
 
 export const Business = mongoose.model('Business', businessSchema);

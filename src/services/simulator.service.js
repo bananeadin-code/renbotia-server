@@ -96,6 +96,9 @@ export async function processMessage({
       title: customer?.name || userText.slice(0, 40) || 'Nueva conversación',
       channel,
       customerPhone: customer?.phone || '',
+      // Id genérico del cliente por canal: wa_id en WhatsApp, PSID en Messenger,
+      // IGSID en Instagram. Permite rutear la conversación en canales sin teléfono.
+      customerId: customer?.id || customer?.phone || '',
       customerName: customer?.name || '',
       messages: [],
     });
