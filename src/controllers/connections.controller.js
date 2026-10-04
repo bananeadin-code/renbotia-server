@@ -277,14 +277,21 @@ export const connectMessenger = asyncHandler(async (req, res) => {
 
   const ex = await exchangeCode(req.body.code);
   if (!ex.ok) {
-    throw new ApiError(502, 'No se pudo completar la conexión con Meta. Intenta de nuevo.', {
-      code: 'EXCHANGE_FAILED',
-    });
+    // Incluimos el motivo de Meta para poder diagnosticar (es la conexión del propio dueño).
+    throw new ApiError(
+      502,
+      `No se pudo completar la conexión con Meta${ex.error ? ` (Meta: ${ex.error})` : ''}. Intenta de nuevo.`,
+      { code: 'EXCHANGE_FAILED' }
+    );
   }
   const userToken = await toLongLivedUserToken(ex.token);
   const list = await listUserPages(userToken);
   if (!list.ok) {
-    throw new ApiError(502, 'No pudimos leer tus Páginas de Facebook. Intenta de nuevo.', { code: 'PAGES_FAILED' });
+    throw new ApiError(
+      502,
+      `No pudimos leer tus Páginas de Facebook${list.error ? ` (Meta: ${list.error})` : ''}. Intenta de nuevo.`,
+      { code: 'PAGES_FAILED' }
+    );
   }
   if (!list.pages.length) {
     throw new ApiError(
