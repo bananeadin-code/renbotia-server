@@ -44,6 +44,48 @@ export async function sendMessengerText({ pageToken, recipientId, text }) {
 }
 
 /**
+ * Cambia un token de usuario corto por uno de LARGA duración (~60 días). Los
+ * tokens de Página que se obtienen con un token largo NO expiran, por eso se hace
+ * antes de listar las Páginas. Si falla, se devuelve el token original.
+ */
+export async function toLongLivedUserToken(userToken) {
+  try {
+    const url = new URL(`${GRAPH()}/oauth/access_token`);
+    url.searchParams.set('grant_type', 'fb_exchange_token');
+    url.searchParams.set('client_id', env.whatsapp.appId);
+    url.searchParams.set('client_secret', env.whatsapp.appSecret);
+    url.searchParams.set('fb_exchange_token', userToken);
+    const res = await fetch(url);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.access_token) return userToken;
+    return data.access_token;
+  } catch {
+    return userToken;
+  }
+}
+
+/**
+ * Páginas que el usuario concedió en el Facebook Login, con su token de Página.
+ * @returns {Promise<{ ok:boolean, pages?: Array<{id:string,name:string,access_token:string}>, error?:string }>}
+ */
+export async function listUserPages(userToken) {
+  try {
+    const res = await fetch(
+      `${GRAPH()}/me/accounts?fields=id,name,access_token&limit=50&access_token=${encodeURIComponent(userToken)}`
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      logger.warn(`Messenger: /me/accounts ${res.status}: ${JSON.stringify(data).slice(0, 200)}`);
+      return { ok: false, error: data?.error?.message || `HTTP ${res.status}` };
+    }
+    const pages = (data.data || []).filter((p) => p.id && p.access_token);
+    return { ok: true, pages };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+/**
  * Datos públicos de una Página (nombre) a partir de su token. Para mostrar en el
  * panel al conectar. Fail-soft.
  */

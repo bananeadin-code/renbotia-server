@@ -18,6 +18,32 @@ import {
   getPhoneNumberInfo,
 } from '../services/whatsapp.service.js';
 import { logAudit } from '../services/audit.service.js';
+import { Subscription } from '../models/Subscription.js';
+import { PLAN_LIMITS } from '../config/constants.js';
+import { toLongLivedUserToken, listUserPages, subscribePageToApp } from '../services/messenger.service.js';
+
+async function getPlanKey(businessId) {
+  const sub = await Subscription.findOne({ business: businessId }).populate('plan', 'key');
+  return sub?.plan?.key || 'free';
+}
+
+/**
+ * Límite de canales por plan: Free = un canal conectado a la vez; Pro/Elite =
+ * varios simultáneos (PLAN_LIMITS.multiChannel). Se valida al CONECTAR un canal.
+ */
+async function assertChannelAllowed(businessId, channel) {
+  const planKey = await getPlanKey(businessId);
+  if (PLAN_LIMITS[planKey]?.multiChannel) return;
+  const b = await Business.findById(businessId).select('whatsappPhoneNumberId facebookPageId');
+  const other = channel === 'messenger' ? b?.whatsappPhoneNumberId : b?.facebookPageId;
+  if (other) {
+    throw new ApiError(
+      403,
+      'Tu plan Free permite un canal conectado a la vez. Desconecta el otro canal o mejora a Pro para usar varios al mismo tiempo.',
+      { code: 'CHANNEL_LIMIT' }
+    );
+  }
+}
 
 // Categorías (verticals) de WhatsApp Business con etiqueta en español para el
 // selector. El valor debe ser uno del enum de Meta.
@@ -41,8 +67,9 @@ const WHATSAPP_VERTICALS = [
 /** GET /api/connections — estado + config pública para inicializar el signup. */
 export const getConnections = asyncHandler(async (req, res) => {
   const business = await Business.findById(req.businessId).select(
-    'whatsappPhoneNumberId whatsappWabaId whatsappVerified'
+    'whatsappPhoneNumberId whatsappWabaId whatsappVerified facebookPageId facebookPageName'
   );
+  const planKey = await getPlanKey(req.businessId);
 
   // Si está conectado, leemos el número visible y el nombre verificado (para
   // mostrar cuál número usa el bot, no solo el id). Best-effort: si falla, se
@@ -61,10 +88,12 @@ export const getConnections = asyncHandler(async (req, res) => {
     success: true,
     data: {
       embeddedEnabled: env.whatsapp.embeddedEnabled,
-      // No secretos: el cliente los usa para lanzar el Embedded Signup.
+      messengerEnabled: env.facebook.messengerEnabled,
+      // No secretos: el cliente los usa para lanzar el Embedded Signup / FB Login.
       facebook: {
         appId: env.whatsapp.appId,
         configId: env.whatsapp.configId,
+        messengerConfigId: env.facebook.messengerConfigId,
         apiVersion: env.whatsapp.apiVersion,
       },
       whatsapp: {
@@ -74,6 +103,14 @@ export const getConnections = asyncHandler(async (req, res) => {
         phoneNumber,
         verifiedName,
       },
+      messenger: {
+        connected: Boolean(business?.facebookPageId),
+        pageId: business?.facebookPageId || '',
+        pageName: business?.facebookPageName || '',
+      },
+      // Free = un canal a la vez; Pro/Elite = varios (para orientar en la UI).
+      planKey,
+      multiChannel: Boolean(PLAN_LIMITS[planKey]?.multiChannel),
     },
   });
 });
@@ -92,6 +129,7 @@ export const connectWhatsApp = asyncHandler(async (req, res) => {
       code: 'EMBEDDED_DISABLED',
     });
   }
+  await assertChannelAllowed(req.businessId, 'whatsapp');
   const { code } = req.body;
   let { wabaId, phoneNumberId } = req.body;
 
@@ -175,6 +213,121 @@ export const disconnectWhatsApp = asyncHandler(async (req, res) => {
     summary: 'Desconectó su número de WhatsApp.',
   });
 
+  res.json({ success: true, data: { connected: false } });
+});
+
+/* ─── Facebook Messenger (Fase 3 multicanal) ──────────────────────────────────
+   Flujo: FB Login for Business (config de Páginas) → code → token de usuario
+   (largo) → Páginas concedidas con su token → suscribir la Página a la app →
+   guardar en el negocio. Si el usuario concedió varias Páginas, se le pide elegir
+   (la selección vive unos minutos en memoria para no canjear el code dos veces). */
+
+const pendingPages = new Map(); // businessId -> { pages, expiresAt }
+const PENDING_TTL_MS = 10 * 60 * 1000;
+
+async function linkPage(req, page) {
+  const clash = await Business.findOne({ facebookPageId: page.id, _id: { $ne: req.businessId } }).select('_id');
+  if (clash) {
+    throw new ApiError(409, 'Esa Página ya está conectada a otra cuenta.', { code: 'PAGE_IN_USE' });
+  }
+  const sub = await subscribePageToApp(page.id, page.access_token);
+  if (!sub.ok) {
+    throw new ApiError(502, 'No se pudo suscribir tu Página para recibir mensajes. Intenta de nuevo.', {
+      code: 'SUBSCRIBE_FAILED',
+    });
+  }
+  const business = await Business.findById(req.businessId);
+  if (!business) throw new ApiError(404, 'Negocio no encontrado');
+  business.facebookPageId = page.id;
+  business.facebookPageName = page.name || '';
+  business.facebookPageToken = page.access_token;
+  business.facebookConnectedAt = new Date();
+  await business.save();
+
+  void logAudit({
+    businessId: req.businessId,
+    userId: req.userId,
+    action: 'messenger.connect',
+    summary: `Conectó su Página de Facebook "${page.name || page.id}" (Messenger).`,
+  });
+  return { connected: true, pageId: page.id, pageName: page.name || '' };
+}
+
+export const connectMessengerSchema = z.object({ code: z.string().min(10) });
+
+/** POST /api/connections/messenger — completa el FB Login y conecta la Página. */
+export const connectMessenger = asyncHandler(async (req, res) => {
+  if (!env.facebook.messengerEnabled) {
+    throw new ApiError(403, 'La conexión con Messenger aún no está disponible.', { code: 'MESSENGER_DISABLED' });
+  }
+  await assertChannelAllowed(req.businessId, 'messenger');
+
+  const ex = await exchangeCode(req.body.code);
+  if (!ex.ok) {
+    throw new ApiError(502, 'No se pudo completar la conexión con Meta. Intenta de nuevo.', {
+      code: 'EXCHANGE_FAILED',
+    });
+  }
+  const userToken = await toLongLivedUserToken(ex.token);
+  const list = await listUserPages(userToken);
+  if (!list.ok) {
+    throw new ApiError(502, 'No pudimos leer tus Páginas de Facebook. Intenta de nuevo.', { code: 'PAGES_FAILED' });
+  }
+  if (!list.pages.length) {
+    throw new ApiError(
+      422,
+      'No encontramos Páginas de Facebook en tu cuenta. Asegúrate de administrar una Página y de seleccionarla al conectar.',
+      { code: 'NO_PAGES' }
+    );
+  }
+
+  if (list.pages.length === 1) {
+    const data = await linkPage(req, list.pages[0]);
+    return res.json({ success: true, data });
+  }
+
+  pendingPages.set(String(req.businessId), { pages: list.pages, expiresAt: Date.now() + PENDING_TTL_MS });
+  res.json({
+    success: true,
+    data: { needsSelection: true, pages: list.pages.map((p) => ({ id: p.id, name: p.name || p.id })) },
+  });
+});
+
+export const selectMessengerPageSchema = z.object({ pageId: z.string().min(1) });
+
+/** POST /api/connections/messenger/select — elige la Página cuando concedió varias. */
+export const selectMessengerPage = asyncHandler(async (req, res) => {
+  const key = String(req.businessId);
+  const pending = pendingPages.get(key);
+  if (!pending || pending.expiresAt < Date.now()) {
+    pendingPages.delete(key);
+    throw new ApiError(410, 'La selección expiró. Vuelve a pulsar "Conectar Messenger".', {
+      code: 'SELECTION_EXPIRED',
+    });
+  }
+  const page = pending.pages.find((p) => p.id === req.body.pageId);
+  if (!page) throw new ApiError(400, 'Esa Página no está en la lista.', { code: 'PAGE_NOT_FOUND' });
+  const data = await linkPage(req, page);
+  pendingPages.delete(key);
+  res.json({ success: true, data });
+});
+
+/** POST /api/connections/messenger/disconnect — desvincula la Página. */
+export const disconnectMessenger = asyncHandler(async (req, res) => {
+  const business = await Business.findById(req.businessId);
+  if (!business) throw new ApiError(404, 'Negocio no encontrado');
+  business.facebookPageId = '';
+  business.facebookPageName = '';
+  business.facebookPageToken = '';
+  business.facebookConnectedAt = null;
+  await business.save();
+
+  void logAudit({
+    businessId: req.businessId,
+    userId: req.userId,
+    action: 'messenger.disconnect',
+    summary: 'Desconectó su Página de Facebook (Messenger).',
+  });
   res.json({ success: true, data: { connected: false } });
 });
 

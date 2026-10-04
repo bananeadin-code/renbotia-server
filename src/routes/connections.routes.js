@@ -28,6 +28,21 @@ router.put(
   connections.updateWhatsappProfile
 );
 
+// Facebook Messenger: conectar/elegir Página/desconectar (solo dueño).
+router.post(
+  '/messenger',
+  requireBusinessRole('owner'),
+  validate(connections.connectMessengerSchema),
+  connections.connectMessenger
+);
+router.post(
+  '/messenger/select',
+  requireBusinessRole('owner'),
+  validate(connections.selectMessengerPageSchema),
+  connections.selectMessengerPage
+);
+router.post('/messenger/disconnect', requireBusinessRole('owner'), connections.disconnectMessenger);
+
 // Plantillas de la WABA (ver: cualquier miembro; crear: dueño).
 router.get('/whatsapp/templates', connections.listWhatsappTemplates);
 router.post(

@@ -5,6 +5,7 @@ import { ChatSimulation } from '../models/ChatSimulation.js';
 import { Business } from '../models/Business.js';
 import { logAudit } from '../services/audit.service.js';
 import { sendText, sendTemplate, listTemplates } from '../services/whatsapp.service.js';
+import { sendMessengerText } from '../services/messenger.service.js';
 import { summarizeConversation } from '../services/conversationSummary.service.js';
 import { computeServiceWindow } from '../utils/whatsappWindow.js';
 import { toCsv } from '../utils/csv.js';
@@ -157,6 +158,20 @@ export const replyAsAgent = asyncHandler(async (req, res) => {
       sendWarning = result.billing
         ? 'El mensaje se guardó, pero Meta no lo entregó: falta un método de pago en tu cuenta de Meta.'
         : 'El mensaje se guardó, pero no se pudo entregar por WhatsApp. Intenta de nuevo en un momento.';
+    }
+  }
+
+  // Conversación de Messenger: sale al cliente con el token de la Página.
+  if (chat.channel === 'facebook' && chat.customerId) {
+    const biz = await Business.findById(req.businessId).select('+facebookPageToken');
+    const result = await sendMessengerText({
+      pageToken: biz?.facebookPageToken,
+      recipientId: chat.customerId,
+      text,
+    });
+    if (!result.ok) {
+      sendWarning =
+        'El mensaje se guardó, pero no se pudo entregar por Messenger. Si pasaron más de 24 h desde el último mensaje del cliente, Messenger no permite responder.';
     }
   }
 

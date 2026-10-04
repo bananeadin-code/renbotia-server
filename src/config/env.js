@@ -112,6 +112,15 @@ export const env = {
     configId: process.env.WHATSAPP_CONFIG_ID || '',
     embeddedEnabled: process.env.WHATSAPP_EMBEDDED_ENABLED === 'true',
   },
+
+  // Facebook Messenger (Fase 3 multicanal). Usa la MISMA app de Meta que WhatsApp
+  // (appId/appSecret/versión se toman de `whatsapp`). Solo agrega:
+  //  - messengerEnabled: gatea la conexión hasta que Meta apruebe `pages_messaging`.
+  //  - messengerConfigId: configuración de Facebook Login for Business para Páginas.
+  facebook: {
+    messengerEnabled: process.env.FACEBOOK_MESSENGER_ENABLED === 'true',
+    messengerConfigId: process.env.FACEBOOK_MESSENGER_CONFIG_ID || '',
+  },
 };
 
 export const isProd = env.nodeEnv === 'production';

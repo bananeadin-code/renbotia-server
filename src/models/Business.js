@@ -67,7 +67,7 @@ const businessSchema = new mongoose.Schema(
     // ── Facebook Messenger (Fase 3 multicanal) ──────────────────────────────
     // Página de Facebook conectada: su id enruta el webhook, y el token de Página
     // (sensible → select:false, no sale en consultas normales) se usa para enviar.
-    facebookPageId: { type: String, trim: true, default: '', index: true },
+    facebookPageId: { type: String, trim: true, default: '' }, // índice único parcial abajo
     facebookPageName: { type: String, trim: true, default: '' },
     facebookPageToken: { type: String, default: '', select: false },
     facebookConnectedAt: { type: Date, default: null },
