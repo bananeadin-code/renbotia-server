@@ -188,6 +188,7 @@ async function processMessengerInbound(payload) {
     const pageId = entry.id;
     if (!pageId) continue;
     // El token de Página es select:false; lo pedimos explícito para poder responder.
+    logger.info(`Messenger: webhook recibido para la página ${pageId} (${(entry.messaging || []).length} evento/s).`);
     const business = await Business.findOne({ facebookPageId: pageId }).select('+facebookPageToken');
     if (!business) {
       logger.warn(`Messenger: evento para la página ${pageId} sin negocio asociado.`);
@@ -243,7 +244,8 @@ async function handleMessengerMessage({ business, event }) {
 
     if (result?.paused) return; // modo manual: responde una persona desde la bandeja
     if (result?.reply) {
-      await sendMessengerText({ pageToken, recipientId: senderId, text: result.reply });
+      const sent = await sendMessengerText({ pageToken, recipientId: senderId, text: result.reply });
+      if (sent.ok) logger.info(`Messenger: respuesta enviada a ${senderId}.`);
     }
     // Las imágenes del bot (data URI) aún no se envían por Messenger (requieren
     // subir el adjunto a Meta); se omiten sin romper el flujo.
