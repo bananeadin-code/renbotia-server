@@ -44,6 +44,33 @@ export async function sendMessengerText({ pageToken, recipientId, text }) {
 }
 
 /**
+ * Verifica con Meta (debug_token) que un token de usuario que llega del navegador
+ * es válido y fue emitido para NUESTRA app. Evita que alguien nos pase un token de
+ * otra app. Se usa en el flujo de FB Login for Business (variación General), que
+ * entrega el token directamente en lugar de un `code`.
+ * @returns {Promise<{ ok:boolean, error?:string }>}
+ */
+export async function verifyUserToken(userToken) {
+  try {
+    const appToken = `${env.whatsapp.appId}|${env.whatsapp.appSecret}`;
+    const res = await fetch(
+      `${GRAPH()}/debug_token?input_token=${encodeURIComponent(userToken)}&access_token=${encodeURIComponent(appToken)}`
+    );
+    const body = await res.json().catch(() => ({}));
+    const d = body?.data || {};
+    if (!res.ok || !d.is_valid) {
+      return { ok: false, error: d?.error?.message || body?.error?.message || 'token inválido' };
+    }
+    if (String(d.app_id) !== String(env.whatsapp.appId)) {
+      return { ok: false, error: 'el token no pertenece a esta app' };
+    }
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+/**
  * Cambia un token de usuario corto por uno de LARGA duración (~60 días). Los
  * tokens de Página que se obtienen con un token largo NO expiran, por eso se hace
  * antes de listar las Páginas. Si falla, se devuelve el token original.

@@ -21,7 +21,12 @@ import { logAudit } from '../services/audit.service.js';
 import { Subscription } from '../models/Subscription.js';
 import { User } from '../models/User.js';
 import { PLAN_LIMITS } from '../config/constants.js';
-import { toLongLivedUserToken, listUserPages, subscribePageToApp } from '../services/messenger.service.js';
+import {
+  toLongLivedUserToken,
+  listUserPages,
+  subscribePageToApp,
+  verifyUserToken,
+} from '../services/messenger.service.js';
 
 /**
  * ¿Messenger está disponible para este usuario? Abierto a todos con el flag, o
@@ -266,7 +271,15 @@ async function linkPage(req, page) {
   return { connected: true, pageId: page.id, pageName: page.name || '' };
 }
 
-export const connectMessengerSchema = z.object({ code: z.string().min(10) });
+// La variación General de FB Login for Business entrega el TOKEN de usuario en el
+// navegador (canjear un `code` exigiría replicar el redirect_uri interno del SDK).
+// Se acepta `code` solo por compatibilidad.
+export const connectMessengerSchema = z
+  .object({
+    accessToken: z.string().min(20).optional(),
+    code: z.string().min(10).optional(),
+  })
+  .refine((d) => d.accessToken || d.code, { message: 'Falta la autorización de Facebook.' });
 
 /** POST /api/connections/messenger — completa el FB Login y conecta la Página. */
 export const connectMessenger = asyncHandler(async (req, res) => {
@@ -275,16 +288,31 @@ export const connectMessenger = asyncHandler(async (req, res) => {
   }
   await assertChannelAllowed(req.businessId, 'messenger');
 
-  const ex = await exchangeCode(req.body.code);
-  if (!ex.ok) {
-    // Incluimos el motivo de Meta para poder diagnosticar (es la conexión del propio dueño).
-    throw new ApiError(
-      502,
-      `No se pudo completar la conexión con Meta${ex.error ? ` (Meta: ${ex.error})` : ''}. Intenta de nuevo.`,
-      { code: 'EXCHANGE_FAILED' }
-    );
+  let shortToken;
+  if (req.body.accessToken) {
+    // Token del navegador: verificamos con Meta que es válido y de NUESTRA app.
+    const v = await verifyUserToken(req.body.accessToken);
+    if (!v.ok) {
+      throw new ApiError(
+        401,
+        `No se pudo validar tu sesión de Facebook${v.error ? ` (Meta: ${v.error})` : ''}. Intenta de nuevo.`,
+        { code: 'TOKEN_INVALID' }
+      );
+    }
+    shortToken = req.body.accessToken;
+  } else {
+    const ex = await exchangeCode(req.body.code);
+    if (!ex.ok) {
+      // Incluimos el motivo de Meta para poder diagnosticar (es la conexión del propio dueño).
+      throw new ApiError(
+        502,
+        `No se pudo completar la conexión con Meta${ex.error ? ` (Meta: ${ex.error})` : ''}. Intenta de nuevo.`,
+        { code: 'EXCHANGE_FAILED' }
+      );
+    }
+    shortToken = ex.token;
   }
-  const userToken = await toLongLivedUserToken(ex.token);
+  const userToken = await toLongLivedUserToken(shortToken);
   const list = await listUserPages(userToken);
   if (!list.ok) {
     throw new ApiError(
