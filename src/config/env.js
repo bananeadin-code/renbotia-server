@@ -120,6 +120,12 @@ export const env = {
   facebook: {
     messengerEnabled: process.env.FACEBOOK_MESSENGER_ENABLED === 'true',
     messengerConfigId: process.env.FACEBOOK_MESSENGER_CONFIG_ID || '',
+    // Correos (separados por coma) que ven Messenger aunque el flag esté apagado:
+    // para grabar el video y que el revisor de Meta pruebe, sin abrirlo a todos.
+    messengerAllowlist: (process.env.FACEBOOK_MESSENGER_ALLOWLIST || '')
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean),
   },
 };
 

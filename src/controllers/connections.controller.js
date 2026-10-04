@@ -19,8 +19,21 @@ import {
 } from '../services/whatsapp.service.js';
 import { logAudit } from '../services/audit.service.js';
 import { Subscription } from '../models/Subscription.js';
+import { User } from '../models/User.js';
 import { PLAN_LIMITS } from '../config/constants.js';
 import { toLongLivedUserToken, listUserPages, subscribePageToApp } from '../services/messenger.service.js';
+
+/**
+ * ¿Messenger está disponible para este usuario? Abierto a todos con el flag, o
+ * solo a los correos de la allowlist (dueño + cuenta reviewer) mientras Meta
+ * revisa `pages_messaging`.
+ */
+async function messengerEnabledFor(userId) {
+  if (env.facebook.messengerEnabled) return true;
+  if (!env.facebook.messengerAllowlist.length) return false;
+  const u = await User.findById(userId).select('email').lean();
+  return env.facebook.messengerAllowlist.includes(String(u?.email || '').toLowerCase());
+}
 
 async function getPlanKey(businessId) {
   const sub = await Subscription.findOne({ business: businessId }).populate('plan', 'key');
@@ -88,7 +101,7 @@ export const getConnections = asyncHandler(async (req, res) => {
     success: true,
     data: {
       embeddedEnabled: env.whatsapp.embeddedEnabled,
-      messengerEnabled: env.facebook.messengerEnabled,
+      messengerEnabled: await messengerEnabledFor(req.userId),
       // No secretos: el cliente los usa para lanzar el Embedded Signup / FB Login.
       facebook: {
         appId: env.whatsapp.appId,
@@ -257,7 +270,7 @@ export const connectMessengerSchema = z.object({ code: z.string().min(10) });
 
 /** POST /api/connections/messenger — completa el FB Login y conecta la Página. */
 export const connectMessenger = asyncHandler(async (req, res) => {
-  if (!env.facebook.messengerEnabled) {
+  if (!(await messengerEnabledFor(req.userId))) {
     throw new ApiError(403, 'La conexión con Messenger aún no está disponible.', { code: 'MESSENGER_DISABLED' });
   }
   await assertChannelAllowed(req.businessId, 'messenger');
