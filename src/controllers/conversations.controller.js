@@ -6,6 +6,7 @@ import { Business } from '../models/Business.js';
 import { logAudit } from '../services/audit.service.js';
 import { sendText, sendTemplate, listTemplates } from '../services/whatsapp.service.js';
 import { sendMessengerText } from '../services/messenger.service.js';
+import { sendInstagramText } from '../services/instagram.service.js';
 import { summarizeConversation } from '../services/conversationSummary.service.js';
 import { computeServiceWindow } from '../utils/whatsappWindow.js';
 import { toCsv } from '../utils/csv.js';
@@ -44,7 +45,7 @@ export const listConversations = asyncHandler(async (req, res) => {
       // Lead caliente: el bot detectó alta intención de compra (oportunidad).
       hotLead: Boolean(c.hotLead),
       hotLeadReason: c.hotLeadReason || '',
-      // Ventana de 24h (WhatsApp y Messenger; null en el simulador).
+      // Ventana de 24h (WhatsApp, Messenger e Instagram; null en simulador y web).
       whatsappWindow: computeServiceWindow(c),
     };
   });
@@ -140,8 +141,8 @@ export const replyAsAgent = asyncHandler(async (req, res) => {
   if (win && !win.open) {
     throw new ApiError(
       409,
-      chat.channel === 'facebook'
-        ? 'Pasaron más de 24 horas desde el último mensaje del cliente. Messenger no permite responder hasta que vuelva a escribir.'
+      chat.channel === 'facebook' || chat.channel === 'instagram'
+        ? `Pasaron más de 24 horas desde el último mensaje del cliente. ${chat.channel === 'instagram' ? 'Instagram' : 'Messenger'} no permite responder hasta que vuelva a escribir.`
         : 'La ventana de 24 horas está cerrada. Para reactivar esta conversación, envía una plantilla aprobada.',
       { code: 'WINDOW_CLOSED' }
     );
@@ -175,6 +176,19 @@ export const replyAsAgent = asyncHandler(async (req, res) => {
     });
     if (!result.ok) {
       sendWarning = 'El mensaje se guardó, pero no se pudo entregar por Messenger. Intenta de nuevo en un momento.';
+    }
+  }
+
+  // Conversación de Instagram: sale por la Página ligada a la cuenta de IG.
+  if (chat.channel === 'instagram' && chat.customerId) {
+    const biz = await Business.findById(req.businessId).select('+instagramPageToken');
+    const result = await sendInstagramText({
+      pageToken: biz?.instagramPageToken,
+      recipientId: chat.customerId,
+      text,
+    });
+    if (!result.ok) {
+      sendWarning = 'El mensaje se guardó, pero no se pudo entregar por Instagram. Intenta de nuevo en un momento.';
     }
   }
 

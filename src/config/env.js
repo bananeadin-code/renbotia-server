@@ -126,6 +126,12 @@ export const env = {
       .split(',')
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean),
+    // Instagram DMs (API de Instagram con inicio de sesión de Facebook): gate propio
+    // hasta que Meta apruebe `instagram_manage_messages`, y su config de FB Login
+    // (activos: Páginas + cuentas de Instagram). La allowlist de arriba aplica
+    // también a Instagram (dueño + reviewer).
+    instagramEnabled: process.env.FACEBOOK_INSTAGRAM_ENABLED === 'true',
+    instagramConfigId: process.env.FACEBOOK_INSTAGRAM_CONFIG_ID || '',
   },
 };
 

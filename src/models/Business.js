@@ -71,6 +71,15 @@ const businessSchema = new mongoose.Schema(
     facebookPageName: { type: String, trim: true, default: '' },
     facebookPageToken: { type: String, default: '', select: false },
     facebookConnectedAt: { type: Date, default: null },
+    // ── Instagram DMs ───────────────────────────────────────────────────────
+    // Cuenta profesional de Instagram ligada a una Página de Facebook. El id de
+    // la cuenta (IGID) enruta el webhook; se responde con el token de la Página
+    // ligada (sensible → select:false). Independiente de Messenger.
+    instagramAccountId: { type: String, trim: true, default: '' }, // índice único parcial abajo
+    instagramUsername: { type: String, trim: true, default: '' },
+    instagramPageId: { type: String, trim: true, default: '' },
+    instagramPageToken: { type: String, default: '', select: false },
+    instagramConnectedAt: { type: Date, default: null },
     // ── Widget web (chat incrustable en el sitio del negocio; Pro/Elite) ──
     // `key` es PÚBLICA (va en el snippet): identifica el negocio, no da acceso al
     // panel. Se genera al activarlo y se puede regenerar para invalidar copias.
@@ -109,6 +118,12 @@ businessSchema.index(
 businessSchema.index(
   { facebookPageId: 1 },
   { unique: true, partialFilterExpression: { facebookPageId: { $type: 'string', $gt: '' } } }
+);
+
+// Una cuenta de Instagram pertenece a un único negocio.
+businessSchema.index(
+  { instagramAccountId: 1 },
+  { unique: true, partialFilterExpression: { instagramAccountId: { $type: 'string', $gt: '' } } }
 );
 
 // La llave pública del widget enruta las peticiones del chat web al negocio.

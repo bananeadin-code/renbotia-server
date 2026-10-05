@@ -12,19 +12,21 @@ import { applyLazyReset, hasBalance, deductTokens } from './token.service.js';
 import { sanitizeBotConfigForPlan } from '../utils/planGating.js';
 import { sendText } from './whatsapp.service.js';
 import { sendMessengerText } from './messenger.service.js';
+import { sendInstagramText } from './instagram.service.js';
 
 /**
  * Seguimiento automático (Pro/Elite).
  *
  * Si el cliente deja de responder después de la última respuesta del BOT, se le
  * escribe UNA vez pasado `delayHours`, siempre DENTRO de la ventana de 24 h de
- * Meta (texto libre, sin plantilla ni costo extra de Meta). No se manda si:
+ * Meta (texto libre, sin plantilla ni costo extra de Meta). Canales: WhatsApp,
+ * Messenger e Instagram. No se manda si:
  * la conversación está en modo manual, pide atención humana, el último mensaje
  * fue de una persona, ya se mandó un seguimiento en este silencio, o (modo IA)
  * el bot juzga que la conversación ya cerró de forma natural.
  */
 
-const CHANNELS = ['whatsapp', 'facebook'];
+const CHANNELS = ['whatsapp', 'facebook', 'instagram'];
 const HOUR = 60 * 60 * 1000;
 const WINDOW_MS = 24 * HOUR;
 // Margen antes de que cierre la ventana: no arriesgar un envío que Meta rechace.
@@ -83,6 +85,9 @@ async function deliver({ business, chat, text }) {
   if (chat.channel === 'whatsapp') {
     return sendText({ phoneNumberId: business.whatsappPhoneNumberId, to: chat.customerPhone, text });
   }
+  if (chat.channel === 'instagram') {
+    return sendInstagramText({ pageToken: business.instagramPageToken, recipientId: chat.customerId, text });
+  }
   return sendMessengerText({ pageToken: business.facebookPageToken, recipientId: chat.customerId, text });
 }
 
@@ -94,7 +99,7 @@ async function runForBusiness(config) {
   const planKey = subscription.plan?.key || 'free';
   if (!PLAN_LIMITS[planKey]?.followUp) return 0;
 
-  const business = await Business.findById(businessId).select('+facebookPageToken');
+  const business = await Business.findById(businessId).select('+facebookPageToken +instagramPageToken');
   if (!business) return 0;
 
   const delayMs = Math.min(20, Math.max(1, config.followUp.delayHours || 4)) * HOUR;
@@ -115,6 +120,7 @@ async function runForBusiness(config) {
     if (!isFollowUpDue(chat, delayMs, now)) continue;
     if (chat.channel === 'whatsapp' && !business.whatsappPhoneNumberId) continue;
     if (chat.channel === 'facebook' && !business.facebookPageToken) continue;
+    if (chat.channel === 'instagram' && !business.instagramPageToken) continue;
     if (config.followUp.mode === 'ai' && !hasBalance(subscription, 1)) break;
 
     // Reclamo atómico: si otra instancia ya lo tomó, se salta. No toca updatedAt

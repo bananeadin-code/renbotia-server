@@ -27,17 +27,25 @@ import {
   subscribePageToApp,
   verifyUserToken,
 } from '../services/messenger.service.js';
+import { listInstagramAccounts } from '../services/instagram.service.js';
 
 /**
- * ¿Messenger está disponible para este usuario? Abierto a todos con el flag, o
- * solo a los correos de la allowlist (dueño + cuenta reviewer) mientras Meta
- * revisa `pages_messaging`.
+ * ¿Messenger / Instagram está disponible para este usuario? Abierto a todos con su
+ * flag, o solo a los correos de la allowlist (dueño + cuenta reviewer) mientras
+ * Meta revisa los permisos de mensajería.
  */
-async function messengerEnabledFor(userId) {
-  if (env.facebook.messengerEnabled) return true;
+async function inAllowlist(userId) {
   if (!env.facebook.messengerAllowlist.length) return false;
   const u = await User.findById(userId).select('email').lean();
   return env.facebook.messengerAllowlist.includes(String(u?.email || '').toLowerCase());
+}
+
+async function messengerEnabledFor(userId) {
+  return env.facebook.messengerEnabled || inAllowlist(userId);
+}
+
+async function instagramEnabledFor(userId) {
+  return env.facebook.instagramEnabled || inAllowlist(userId);
 }
 
 async function getPlanKey(businessId) {
@@ -52,8 +60,13 @@ async function getPlanKey(businessId) {
 async function assertChannelAllowed(businessId, channel) {
   const planKey = await getPlanKey(businessId);
   if (PLAN_LIMITS[planKey]?.multiChannel) return;
-  const b = await Business.findById(businessId).select('whatsappPhoneNumberId facebookPageId');
-  const other = channel === 'messenger' ? b?.whatsappPhoneNumberId : b?.facebookPageId;
+  const b = await Business.findById(businessId).select('whatsappPhoneNumberId facebookPageId instagramAccountId');
+  const connected = {
+    whatsapp: Boolean(b?.whatsappPhoneNumberId),
+    messenger: Boolean(b?.facebookPageId),
+    instagram: Boolean(b?.instagramAccountId),
+  };
+  const other = Object.entries(connected).some(([ch, on]) => ch !== channel && on);
   if (other) {
     throw new ApiError(
       403,
@@ -85,7 +98,7 @@ const WHATSAPP_VERTICALS = [
 /** GET /api/connections — estado + config pública para inicializar el signup. */
 export const getConnections = asyncHandler(async (req, res) => {
   const business = await Business.findById(req.businessId).select(
-    'whatsappPhoneNumberId whatsappWabaId whatsappVerified facebookPageId facebookPageName'
+    'whatsappPhoneNumberId whatsappWabaId whatsappVerified facebookPageId facebookPageName instagramAccountId instagramUsername'
   );
   const planKey = await getPlanKey(req.businessId);
 
@@ -107,11 +120,13 @@ export const getConnections = asyncHandler(async (req, res) => {
     data: {
       embeddedEnabled: env.whatsapp.embeddedEnabled,
       messengerEnabled: await messengerEnabledFor(req.userId),
+      instagramEnabled: await instagramEnabledFor(req.userId),
       // No secretos: el cliente los usa para lanzar el Embedded Signup / FB Login.
       facebook: {
         appId: env.whatsapp.appId,
         configId: env.whatsapp.configId,
         messengerConfigId: env.facebook.messengerConfigId,
+        instagramConfigId: env.facebook.instagramConfigId,
         apiVersion: env.whatsapp.apiVersion,
       },
       whatsapp: {
@@ -125,6 +140,11 @@ export const getConnections = asyncHandler(async (req, res) => {
         connected: Boolean(business?.facebookPageId),
         pageId: business?.facebookPageId || '',
         pageName: business?.facebookPageName || '',
+      },
+      instagram: {
+        connected: Boolean(business?.instagramAccountId),
+        accountId: business?.instagramAccountId || '',
+        username: business?.instagramUsername || '',
       },
       // Free = un canal a la vez; Pro/Elite = varios (para orientar en la UI).
       planKey,
@@ -281,17 +301,15 @@ export const connectMessengerSchema = z
   })
   .refine((d) => d.accessToken || d.code, { message: 'Falta la autorización de Facebook.' });
 
-/** POST /api/connections/messenger — completa el FB Login y conecta la Página. */
-export const connectMessenger = asyncHandler(async (req, res) => {
-  if (!(await messengerEnabledFor(req.userId))) {
-    throw new ApiError(403, 'La conexión con Messenger aún no está disponible.', { code: 'MESSENGER_DISABLED' });
-  }
-  await assertChannelAllowed(req.businessId, 'messenger');
-
+/**
+ * Token de usuario de LARGA duración a partir de lo que manda el navegador tras el
+ * FB Login (token de la variación General, o `code` por compatibilidad). El token
+ * del navegador se VERIFICA con Meta (que sea válido y de NUESTRA app).
+ */
+async function resolveUserToken(body) {
   let shortToken;
-  if (req.body.accessToken) {
-    // Token del navegador: verificamos con Meta que es válido y de NUESTRA app.
-    const v = await verifyUserToken(req.body.accessToken);
+  if (body.accessToken) {
+    const v = await verifyUserToken(body.accessToken);
     if (!v.ok) {
       throw new ApiError(
         401,
@@ -299,11 +317,10 @@ export const connectMessenger = asyncHandler(async (req, res) => {
         { code: 'TOKEN_INVALID' }
       );
     }
-    shortToken = req.body.accessToken;
+    shortToken = body.accessToken;
   } else {
-    const ex = await exchangeCode(req.body.code);
+    const ex = await exchangeCode(body.code);
     if (!ex.ok) {
-      // Incluimos el motivo de Meta para poder diagnosticar (es la conexión del propio dueño).
       throw new ApiError(
         502,
         `No se pudo completar la conexión con Meta${ex.error ? ` (Meta: ${ex.error})` : ''}. Intenta de nuevo.`,
@@ -312,7 +329,17 @@ export const connectMessenger = asyncHandler(async (req, res) => {
     }
     shortToken = ex.token;
   }
-  const userToken = await toLongLivedUserToken(shortToken);
+  return toLongLivedUserToken(shortToken);
+}
+
+/** POST /api/connections/messenger — completa el FB Login y conecta la Página. */
+export const connectMessenger = asyncHandler(async (req, res) => {
+  if (!(await messengerEnabledFor(req.userId))) {
+    throw new ApiError(403, 'La conexión con Messenger aún no está disponible.', { code: 'MESSENGER_DISABLED' });
+  }
+  await assertChannelAllowed(req.businessId, 'messenger');
+
+  const userToken = await resolveUserToken(req.body);
   const list = await listUserPages(userToken);
   if (!list.ok) {
     throw new ApiError(
@@ -375,6 +402,122 @@ export const disconnectMessenger = asyncHandler(async (req, res) => {
     userId: req.userId,
     action: 'messenger.disconnect',
     summary: 'Desconectó su Página de Facebook (Messenger).',
+  });
+  res.json({ success: true, data: { connected: false } });
+});
+
+/* ─── Instagram DMs ───────────────────────────────────────────────────────────
+   Flujo: FB Login for Business (config de Instagram: Páginas + cuentas de IG) →
+   token de usuario (verificado y de larga duración) → Páginas concedidas que
+   tienen cuenta de Instagram profesional ligada → suscribir la Página a la app →
+   guardar la cuenta de IG y el token de su Página. Si hay varias, se elige. */
+
+const pendingIg = new Map(); // businessId -> { accounts, expiresAt }
+
+async function linkInstagram(req, acc) {
+  const clash = await Business.findOne({ instagramAccountId: acc.igId, _id: { $ne: req.businessId } }).select('_id');
+  if (clash) {
+    throw new ApiError(409, 'Esa cuenta de Instagram ya está conectada a otra cuenta de RenBotIA.', {
+      code: 'IG_IN_USE',
+    });
+  }
+  // Instalar la app en la Página ligada habilita los webhooks de mensajería de IG.
+  const sub = await subscribePageToApp(acc.pageId, acc.pageToken);
+  if (!sub.ok) {
+    throw new ApiError(502, 'No se pudo activar la recepción de mensajes de tu Instagram. Intenta de nuevo.', {
+      code: 'SUBSCRIBE_FAILED',
+    });
+  }
+  const business = await Business.findById(req.businessId);
+  if (!business) throw new ApiError(404, 'Negocio no encontrado');
+  business.instagramAccountId = acc.igId;
+  business.instagramUsername = acc.username || '';
+  business.instagramPageId = acc.pageId;
+  business.instagramPageToken = acc.pageToken;
+  business.instagramConnectedAt = new Date();
+  await business.save();
+
+  void logAudit({
+    businessId: req.businessId,
+    userId: req.userId,
+    action: 'instagram.connect',
+    summary: `Conectó su cuenta de Instagram @${acc.username || acc.igId}.`,
+  });
+  return { connected: true, accountId: acc.igId, username: acc.username || '' };
+}
+
+const publicAccount = (a) => ({ id: a.igId, username: a.username, pageName: a.pageName, picture: a.picture });
+
+/** POST /api/connections/instagram — completa el FB Login y conecta la cuenta de IG. */
+export const connectInstagram = asyncHandler(async (req, res) => {
+  if (!(await instagramEnabledFor(req.userId))) {
+    throw new ApiError(403, 'La conexión con Instagram aún no está disponible.', { code: 'INSTAGRAM_DISABLED' });
+  }
+  await assertChannelAllowed(req.businessId, 'instagram');
+
+  const userToken = await resolveUserToken(req.body);
+  const list = await listInstagramAccounts(userToken);
+  if (!list.ok) {
+    throw new ApiError(
+      502,
+      `No pudimos leer tus cuentas${list.error ? ` (Meta: ${list.error})` : ''}. Intenta de nuevo.`,
+      { code: 'PAGES_FAILED' }
+    );
+  }
+  if (!list.accounts.length) {
+    throw new ApiError(
+      422,
+      list.pagesCount
+        ? 'Tus Páginas de Facebook no tienen una cuenta de Instagram profesional vinculada. Vincúlala desde la configuración de tu Página o de Instagram y vuelve a intentar.'
+        : 'No encontramos Páginas de Facebook. Tu cuenta de Instagram debe ser profesional (empresa o creador) y estar vinculada a una Página que administres.',
+      { code: 'NO_INSTAGRAM' }
+    );
+  }
+
+  if (list.accounts.length === 1) {
+    const data = await linkInstagram(req, list.accounts[0]);
+    return res.json({ success: true, data });
+  }
+
+  pendingIg.set(String(req.businessId), { accounts: list.accounts, expiresAt: Date.now() + PENDING_TTL_MS });
+  res.json({ success: true, data: { needsSelection: true, accounts: list.accounts.map(publicAccount) } });
+});
+
+export const selectInstagramSchema = z.object({ accountId: z.string().min(1) });
+
+/** POST /api/connections/instagram/select — elige la cuenta cuando hay varias. */
+export const selectInstagramAccount = asyncHandler(async (req, res) => {
+  const key = String(req.businessId);
+  const pending = pendingIg.get(key);
+  if (!pending || pending.expiresAt < Date.now()) {
+    pendingIg.delete(key);
+    throw new ApiError(410, 'La selección expiró. Vuelve a pulsar "Conectar Instagram".', {
+      code: 'SELECTION_EXPIRED',
+    });
+  }
+  const acc = pending.accounts.find((a) => a.igId === req.body.accountId);
+  if (!acc) throw new ApiError(400, 'Esa cuenta no está en la lista.', { code: 'ACCOUNT_NOT_FOUND' });
+  const data = await linkInstagram(req, acc);
+  pendingIg.delete(key);
+  res.json({ success: true, data });
+});
+
+/** POST /api/connections/instagram/disconnect — desvincula la cuenta de IG. */
+export const disconnectInstagram = asyncHandler(async (req, res) => {
+  const business = await Business.findById(req.businessId);
+  if (!business) throw new ApiError(404, 'Negocio no encontrado');
+  business.instagramAccountId = '';
+  business.instagramUsername = '';
+  business.instagramPageId = '';
+  business.instagramPageToken = '';
+  business.instagramConnectedAt = null;
+  await business.save();
+
+  void logAudit({
+    businessId: req.businessId,
+    userId: req.userId,
+    action: 'instagram.disconnect',
+    summary: 'Desconectó su cuenta de Instagram.',
   });
   res.json({ success: true, data: { connected: false } });
 });

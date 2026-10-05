@@ -43,6 +43,21 @@ router.post(
 );
 router.post('/messenger/disconnect', requireBusinessRole('owner'), connections.disconnectMessenger);
 
+// Instagram DMs (cuenta profesional ligada a una Página): acción del DUEÑO.
+router.post(
+  '/instagram',
+  requireBusinessRole('owner'),
+  validate(connections.connectMessengerSchema),
+  connections.connectInstagram
+);
+router.post(
+  '/instagram/select',
+  requireBusinessRole('owner'),
+  validate(connections.selectInstagramSchema),
+  connections.selectInstagramAccount
+);
+router.post('/instagram/disconnect', requireBusinessRole('owner'), connections.disconnectInstagram);
+
 // Plantillas de la WABA (ver: cualquier miembro; crear: dueño).
 router.get('/whatsapp/templates', connections.listWhatsappTemplates);
 router.post(

@@ -20,6 +20,7 @@ import memberRoutes from './members.routes.js';
 import conversationRoutes from './conversations.routes.js';
 import connectionRoutes from './connections.routes.js';
 import widgetRoutes from './widget.routes.js';
+import mediaRoutes from './media.routes.js';
 import { runFollowUps } from '../services/followUp.service.js';
 
 /**
@@ -71,6 +72,7 @@ router.use('/billing', billingRoutes);
 router.use('/management', managementRoutes);
 router.use('/conversations', conversationRoutes);
 router.use('/connections', connectionRoutes);
+router.use('/media', mediaRoutes); // público: imágenes del bot por URL (Instagram)
 router.use('/widget', widgetRoutes); // panel + público (chat web incrustable)
 router.use('/members', memberRoutes);
 router.use('/admin', adminRoutes);

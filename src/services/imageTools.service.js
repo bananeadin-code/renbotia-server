@@ -44,6 +44,7 @@ export function executeImageTool(input, images) {
   }
   return {
     result: { ok: true, mensaje: `Imagen "${img.label.trim()}" enviada al cliente.` },
-    image: { label: img.label.trim(), url: img.url.trim() },
+    // id: permite servir la imagen por URL pública (Instagram no acepta data URI).
+    image: { id: img._id ? String(img._id) : '', label: img.label.trim(), url: img.url.trim() },
   };
 }

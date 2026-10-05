@@ -10,6 +10,7 @@ import {
   getMessengerProfileName,
   downloadMessengerImage,
 } from '../services/messenger.service.js';
+import { sendInstagramText, sendInstagramImage, getInstagramProfileName } from '../services/instagram.service.js';
 
 /**
  * Webhook de WhatsApp Cloud API (Meta).
@@ -65,10 +66,11 @@ export function receiveWebhook(req, res) {
 
 /**
  * Despacha el webhook según su origen. La MISMA URL recibe eventos de WhatsApp y
- * de Páginas de Facebook (Messenger); se distinguen por `payload.object`.
+ * de Páginas de Facebook (Messenger) e Instagram; se distinguen por `payload.object`.
  */
 async function processInbound(payload) {
   if (payload?.object === 'page') return processMessengerInbound(payload);
+  if (payload?.object === 'instagram') return processInstagramInbound(payload);
   return processWhatsAppInbound(payload);
 }
 
@@ -184,38 +186,74 @@ async function handleMessage({ business, phoneNumberId, msg, customerName }) {
   }
 }
 
-/* ── Facebook Messenger ───────────────────────────────────────────────────────
-   Mismo webhook, payload distinto: entry[].messaging[] con sender.id (PSID) y
-   message.text. Se enruta al negocio por el id de la Página (entry.id). */
+/* ── Facebook Messenger e Instagram DMs ───────────────────────────────────────
+   Mismo webhook, payload entry[].messaging[] con sender.id (PSID en Messenger,
+   IGSID en Instagram) y message.text/attachments. Messenger se enruta por el id
+   de la Página (entry.id); Instagram por el id de la cuenta de IG (entry.id). Ambos
+   responden con el token de la Página por /me/messages. */
+
+// Adaptadores por canal: cómo enviar, cómo obtener el nombre del cliente.
+const DM_CHANNELS = {
+  facebook: {
+    label: 'Messenger',
+    sendText: sendMessengerText,
+    sendImage: sendMessengerImage,
+    getName: getMessengerProfileName,
+  },
+  instagram: {
+    label: 'Instagram',
+    sendText: sendInstagramText,
+    sendImage: sendInstagramImage,
+    getName: getInstagramProfileName,
+  },
+};
 
 async function processMessengerInbound(payload) {
   for (const entry of payload.entry || []) {
     const pageId = entry.id;
     if (!pageId) continue;
-    // El token de Página es select:false; lo pedimos explícito para poder responder.
     logger.info(`Messenger: webhook recibido para la página ${pageId} (${(entry.messaging || []).length} evento/s).`);
+    // El token de Página es select:false; lo pedimos explícito para poder responder.
     const business = await Business.findOne({ facebookPageId: pageId }).select('+facebookPageToken');
     if (!business) {
       logger.warn(`Messenger: evento para la página ${pageId} sin negocio asociado.`);
       continue;
     }
     for (const event of entry.messaging || []) {
-      await handleMessengerMessage({ business, event });
+      await handleDmMessage({ business, event, channel: 'facebook', pageToken: business.facebookPageToken });
     }
   }
 }
 
-async function handleMessengerMessage({ business, event }) {
+async function processInstagramInbound(payload) {
+  for (const entry of payload.entry || []) {
+    const igId = entry.id;
+    if (!igId) continue;
+    logger.info(`Instagram: webhook recibido para la cuenta ${igId} (${(entry.messaging || []).length} evento/s).`);
+    const business = await Business.findOne({ instagramAccountId: igId }).select('+instagramPageToken');
+    if (!business) {
+      logger.warn(`Instagram: evento para la cuenta ${igId} sin negocio asociado.`);
+      continue;
+    }
+    for (const event of entry.messaging || []) {
+      // En Instagram, un mensaje que la propia cuenta envía llega con sender = la cuenta.
+      if (event.sender?.id === igId) continue;
+      await handleDmMessage({ business, event, channel: 'instagram', pageToken: business.instagramPageToken });
+    }
+  }
+}
+
+async function handleDmMessage({ business, event, channel, pageToken }) {
+  const ch = DM_CHANNELS[channel];
   const msg = event.message;
-  // Ignorar ecos (lo que envía la propia página) y eventos sin mensaje (entregas,
-  // lecturas, postbacks). Dedupe por mid.
-  if (!msg || msg.is_echo) return;
+  // Ignorar ecos (lo que envía la propia cuenta), mensajes borrados y eventos sin
+  // mensaje (entregas, lecturas, reacciones, postbacks). Dedupe por mid.
+  if (!msg || msg.is_echo || msg.is_deleted || msg.is_unsupported) return;
   if (alreadyProcessed(msg.mid)) return;
 
-  const senderId = event.sender?.id; // PSID del cliente
+  const senderId = event.sender?.id; // PSID / IGSID del cliente
   if (!senderId) return;
 
-  const pageToken = business.facebookPageToken;
   let text = (msg.text || '').trim();
   let image = null;
   if (!text) {
@@ -227,7 +265,7 @@ async function handleMessengerMessage({ business, event }) {
       if (media.ok) {
         image = { mediaType: media.mime, data: media.base64 };
       } else {
-        await sendMessengerText({
+        await ch.sendText({
           pageToken,
           recipientId: senderId,
           text: 'No pude abrir esa imagen. ¿Puedes reenviarla o escribirme el detalle por aquí?',
@@ -236,7 +274,7 @@ async function handleMessengerMessage({ business, event }) {
       }
     } else {
       if (msg.attachments?.length) {
-        await sendMessengerText({
+        await ch.sendText({
           pageToken,
           recipientId: senderId,
           text: 'Por ahora puedo leer texto e imágenes. ¿Me lo escribes por aquí?',
@@ -246,18 +284,18 @@ async function handleMessengerMessage({ business, event }) {
     }
   }
 
-  // Continuar la conversación abierta de este cliente (por PSID).
+  // Continuar la conversación abierta de este cliente (por PSID/IGSID).
   const existing = await ChatSimulation.findOne({
     business: business._id,
-    channel: 'facebook',
+    channel,
     customerId: senderId,
   }).sort({ updatedAt: -1 });
 
-  // Nombre del cliente (perfil de Messenger): solo si aún no lo tenemos, para no
-  // consultar a Meta en cada mensaje.
+  // Nombre del cliente: solo si aún no lo tenemos, para no consultar a Meta en
+  // cada mensaje.
   let customerName = existing?.customerName || '';
   if (!customerName) {
-    customerName = await getMessengerProfileName(senderId, pageToken);
+    customerName = await ch.getName(senderId, pageToken);
     if (existing && customerName) {
       existing.customerName = customerName;
       await existing.save().catch(() => {});
@@ -271,26 +309,26 @@ async function handleMessengerMessage({ business, event }) {
       message: text,
       image,
       chatId: existing?._id,
-      channel: 'facebook',
+      channel,
       customer: { id: senderId, name: customerName },
-      source: 'facebook',
+      source: channel,
     });
 
     if (result?.paused) return; // modo manual: responde una persona desde la bandeja
     if (result?.reply) {
-      const sent = await sendMessengerText({ pageToken, recipientId: senderId, text: result.reply });
-      if (sent.ok) logger.info(`Messenger: respuesta enviada a ${senderId}.`);
+      const sent = await ch.sendText({ pageToken, recipientId: senderId, text: result.reply });
+      if (sent.ok) logger.info(`${ch.label}: respuesta enviada a ${senderId}.`);
     }
     // Imágenes que el bot decidió enviar (Elite): tras el texto, en orden.
     for (const img of result?.sentImages || []) {
-      const r = await sendMessengerImage({ pageToken, recipientId: senderId, image: img });
-      if (!r?.ok) logger.error(`Messenger: no se pudo enviar la imagen "${img?.label}": ${r?.error}`);
+      const r = await ch.sendImage({ pageToken, recipientId: senderId, image: img });
+      if (!r?.ok) logger.error(`${ch.label}: no se pudo enviar la imagen "${img?.label}": ${r?.error}`);
     }
   } catch (err) {
     if (err.statusCode === 402) {
-      logger.warn(`Messenger: negocio ${business._id} sin créditos; mensaje no atendido.`);
+      logger.warn(`${ch.label}: negocio ${business._id} sin créditos; mensaje no atendido.`);
       return;
     }
-    logger.error(`Messenger: fallo al procesar mensaje de ${senderId}: ${err.message}`);
+    logger.error(`${ch.label}: fallo al procesar mensaje de ${senderId}: ${err.message}`);
   }
 }

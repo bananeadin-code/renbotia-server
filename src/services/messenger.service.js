@@ -1,5 +1,6 @@
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
+import { splitMessage } from '../utils/splitMessage.js';
 
 /**
  * Adaptador de Facebook Messenger (Meta Graph API). Separado de WhatsApp: aquí el
@@ -9,10 +10,11 @@ import { logger } from '../utils/logger.js';
  * Nota: la app de Meta es la MISMA que WhatsApp, por eso el App Secret (firma del
  * webhook) y la versión de la Graph API se reutilizan de env.whatsapp.
  */
-const GRAPH = () => `https://graph.facebook.com/${env.whatsapp.apiVersion || 'v21.0'}`;
+export const GRAPH = () => `https://graph.facebook.com/${env.whatsapp.apiVersion || 'v21.0'}`;
 
 /**
- * Envía un mensaje de texto a un cliente de Messenger.
+ * Envía un mensaje de texto a un cliente de Messenger. Si pasa de 2000 caracteres
+ * (límite de Messenger) se manda en varios mensajes seguidos.
  * @param {{ pageToken:string, recipientId:string, text:string }} p
  * @returns {Promise<{ ok:boolean, id?:string, status?:number, error?:string }>}
  */
@@ -21,24 +23,38 @@ export async function sendMessengerText({ pageToken, recipientId, text }) {
     logger.warn('Messenger: envío omitido (sin token de página o destinatario).');
     return { ok: false, error: 'missing_params' };
   }
+  let last = { ok: false, error: 'empty' };
+  for (const chunk of splitMessage(text, 2000)) {
+    last = await postPageMessage(pageToken, {
+      recipient: { id: recipientId },
+      messaging_type: 'RESPONSE', // respuesta a un mensaje del usuario (ventana 24h)
+      message: { text: chunk },
+    }, 'Messenger');
+    if (!last.ok) break;
+  }
+  return last;
+}
+
+/**
+ * POST /me/messages con el token de la Página. Lo comparten Messenger e Instagram
+ * (la API de Instagram con inicio de sesión de Facebook envía por la Página ligada).
+ * @returns {Promise<{ ok:boolean, id?:string, status?:number, error?:string }>}
+ */
+export async function postPageMessage(pageToken, body, label = 'Messenger') {
   try {
     const res = await fetch(`${GRAPH()}/me/messages?access_token=${encodeURIComponent(pageToken)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        recipient: { id: recipientId },
-        messaging_type: 'RESPONSE', // respuesta a un mensaje del usuario (ventana 24h)
-        message: { text },
-      }),
+      body: JSON.stringify(body),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      logger.warn(`Messenger: envío ${res.status}: ${JSON.stringify(data).slice(0, 300)}`);
+      logger.warn(`${label}: envío ${res.status}: ${JSON.stringify(data).slice(0, 300)}`);
       return { ok: false, status: res.status, error: data?.error?.message };
     }
     return { ok: true, id: data.message_id };
   } catch (err) {
-    logger.warn(`Messenger: error de envío: ${err.message}`);
+    logger.warn(`${label}: error de envío: ${err.message}`);
     return { ok: false, error: err.message };
   }
 }
