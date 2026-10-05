@@ -19,6 +19,8 @@ import contactRoutes from './contact.routes.js';
 import memberRoutes from './members.routes.js';
 import conversationRoutes from './conversations.routes.js';
 import connectionRoutes from './connections.routes.js';
+import widgetRoutes from './widget.routes.js';
+import { runFollowUps } from '../services/followUp.service.js';
 
 /**
  * Monta todas las rutas de la API bajo /api.
@@ -40,6 +42,18 @@ router.get('/health', (req, res) => {
   });
 });
 
+// Disparo externo del seguimiento automático (Render Cron u otro programador),
+// por si el proceso web estuvo dormido. Protegido con CRON_SECRET; sin él, 404.
+router.post('/internal/followups', async (req, res, next) => {
+  const secret = process.env.CRON_SECRET;
+  if (!secret || req.get('x-cron-secret') !== secret) return res.sendStatus(404);
+  try {
+    res.json({ success: true, data: await runFollowUps() });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.use('/auth', authRoutes);
 router.use('/onboarding', onboardingRoutes);
 router.use('/plans', planRoutes);
@@ -57,6 +71,7 @@ router.use('/billing', billingRoutes);
 router.use('/management', managementRoutes);
 router.use('/conversations', conversationRoutes);
 router.use('/connections', connectionRoutes);
+router.use('/widget', widgetRoutes); // panel + público (chat web incrustable)
 router.use('/members', memberRoutes);
 router.use('/admin', adminRoutes);
 

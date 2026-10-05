@@ -71,6 +71,16 @@ const businessSchema = new mongoose.Schema(
     facebookPageName: { type: String, trim: true, default: '' },
     facebookPageToken: { type: String, default: '', select: false },
     facebookConnectedAt: { type: Date, default: null },
+    // ── Widget web (chat incrustable en el sitio del negocio; Pro/Elite) ──
+    // `key` es PÚBLICA (va en el snippet): identifica el negocio, no da acceso al
+    // panel. Se genera al activarlo y se puede regenerar para invalidar copias.
+    widget: {
+      enabled: { type: Boolean, default: false },
+      key: { type: String, default: '' }, // índice único parcial abajo
+      color: { type: String, default: '#4f46e5' },
+      greeting: { type: String, default: '', maxlength: 200 },
+      position: { type: String, enum: ['right', 'left'], default: 'right' },
+    },
     status: {
       type: String,
       enum: Object.values(BUSINESS_STATUS),
@@ -99,6 +109,12 @@ businessSchema.index(
 businessSchema.index(
   { facebookPageId: 1 },
   { unique: true, partialFilterExpression: { facebookPageId: { $type: 'string', $gt: '' } } }
+);
+
+// La llave pública del widget enruta las peticiones del chat web al negocio.
+businessSchema.index(
+  { 'widget.key': 1 },
+  { unique: true, partialFilterExpression: { 'widget.key': { $type: 'string', $gt: '' } } }
 );
 
 export const Business = mongoose.model('Business', businessSchema);

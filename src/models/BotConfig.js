@@ -56,6 +56,15 @@ const botConfigSchema = new mongoose.Schema(
     // Respuestas rápidas (canned) que el AGENTE inserta al responder en modo
     // manual desde la bandeja. No las usa el bot; son atajos para la persona.
     quickReplies: { type: [String], default: [] },
+    // Seguimiento automático (Pro/Elite): si el cliente deja de responder tras la
+    // última respuesta del bot, se le escribe UNA vez dentro de la ventana de 24h.
+    // mode 'ai' = el bot redacta según la conversación; 'custom' = texto fijo.
+    followUp: {
+      enabled: { type: Boolean, default: false },
+      delayHours: { type: Number, default: 4, min: 1, max: 20 },
+      mode: { type: String, enum: ['ai', 'custom'], default: 'ai' },
+      message: { type: String, default: '', maxlength: 500 },
+    },
     // Elite: documentos de contexto subidos por el negocio (PDF, texto). Guardamos
     // el TEXTO ya extraído (no el archivo) como material de referencia del bot.
     documents: {

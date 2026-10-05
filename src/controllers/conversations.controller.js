@@ -9,6 +9,7 @@ import { sendMessengerText } from '../services/messenger.service.js';
 import { summarizeConversation } from '../services/conversationSummary.service.js';
 import { computeServiceWindow } from '../utils/whatsappWindow.js';
 import { toCsv } from '../utils/csv.js';
+import { CONVERSATION_RETENTION_DAYS } from '../config/constants.js';
 
 /**
  * Bandeja de Conversaciones: gestión de la actividad de chat del bot, con modo
@@ -54,6 +55,8 @@ export const listConversations = asyncHandler(async (req, res) => {
       conversations,
       needAttention: conversations.filter((c) => c.needsAttention).length,
       hotLeads: conversations.filter((c) => c.hotLead).length,
+      // Días sin actividad tras los que una conversación se elimina sola.
+      retentionDays: CONVERSATION_RETENTION_DAYS,
     },
   });
 });

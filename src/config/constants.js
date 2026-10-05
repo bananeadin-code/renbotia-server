@@ -31,6 +31,8 @@ export const PLANS = [
       'Instrucciones de personalidad para tu bot',
       'Contexto ampliado: describe tu negocio a detalle',
       'Colaboradores: invita a tu equipo',
+      'Chat del bot para tu sitio web',
+      'Seguimiento automático a clientes que dejan de responder',
       'Simulador y bandeja de Conversaciones',
       'Multicanal: varios canales a la vez (Instagram y Messenger en camino)',
     ],
@@ -47,11 +49,19 @@ export const PLANS = [
       'Contexto ampliado del negocio',
       'Módulo de Gestión: agenda citas, toma pedidos y capta prospectos',
       'El bot envía imágenes por sí solo (hasta 30)',
+      'Chat para tu sitio web y seguimiento automático',
       'Colaboradores y bandeja de Conversaciones',
       'Multicanal: varios canales a la vez (Instagram y Messenger en camino)',
     ],
   },
 ];
+
+/**
+ * Retención de conversaciones: las que llevan este número de días SIN actividad
+ * se eliminan solas (índice TTL de MongoDB sobre updatedAt) para liberar espacio.
+ * Cualquier mensaje nuevo reinicia el conteo. Se avisa en la bandeja.
+ */
+export const CONVERSATION_RETENTION_DAYS = 30;
 
 /**
  * Capacidades del panel de entrenamiento por plan. `maxFaqs: null` = ilimitado.
@@ -60,10 +70,12 @@ export const PLANS = [
  */
 // multiChannel: conectar el bot a más de un canal (WhatsApp + Instagram + Facebook).
 // Beneficio de Pro y Elite (no Free). Listo para la Fase 2 multicanal.
+// webWidget: chat del bot incrustable en el sitio web del negocio (Pro/Elite).
+// followUp: seguimiento automático a clientes que dejaron de responder (Pro/Elite).
 export const PLAN_LIMITS = {
-  free: { maxFaqs: 2, personality: false, tone: false, extraContext: false, maxImages: 0, documents: false, visionInput: false, management: false, multiUser: false, multiChannel: false },
-  pro: { maxFaqs: 10, personality: true, tone: true, extraContext: true, maxImages: 0, documents: false, visionInput: false, management: false, multiUser: true, multiChannel: true },
-  elite: { maxFaqs: null, personality: true, tone: true, extraContext: true, maxImages: 30, documents: true, visionInput: true, management: true, multiUser: true, multiChannel: true },
+  free: { maxFaqs: 2, personality: false, tone: false, extraContext: false, maxImages: 0, documents: false, visionInput: false, management: false, multiUser: false, multiChannel: false, webWidget: false, followUp: false },
+  pro: { maxFaqs: 10, personality: true, tone: true, extraContext: true, maxImages: 0, documents: false, visionInput: false, management: false, multiUser: true, multiChannel: true, webWidget: true, followUp: true },
+  elite: { maxFaqs: null, personality: true, tone: true, extraContext: true, maxImages: 30, documents: true, visionInput: true, management: true, multiUser: true, multiChannel: true, webWidget: true, followUp: true },
 };
 
 /**

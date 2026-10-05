@@ -42,6 +42,18 @@ export const updateBotConfigSchema = z.object({
     .optional(),
   extraContext: z.string().max(6000).optional(),
   quickReplies: z.array(z.string().max(300)).max(12).optional(),
+  followUp: z
+    .object({
+      enabled: z.boolean(),
+      delayHours: z.number().int().min(1).max(20),
+      mode: z.enum(['ai', 'custom']),
+      message: z.string().max(500).optional().default(''),
+    })
+    .refine((f) => !f.enabled || f.mode !== 'custom' || f.message.trim().length >= 5, {
+      message: 'Escribe el mensaje de seguimiento (mínimo 5 caracteres).',
+      path: ['message'],
+    })
+    .optional(),
   images: z.array(imageSchema).max(30).optional(),
   documents: z
     .array(

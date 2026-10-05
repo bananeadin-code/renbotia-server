@@ -40,5 +40,8 @@ export function sanitizeBotConfigForPlan(cfg = {}, planKey = 'free') {
   // Documentos de contexto: solo Elite
   if (!limits.documents) out.documents = [];
 
+  // Seguimiento automático: solo Pro/Elite (se conserva la config, apagada).
+  if (!limits.followUp && out.followUp) out.followUp = { ...out.followUp, enabled: false };
+
   return out;
 }

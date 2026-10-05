@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { CONVERSATION_RETENTION_DAYS } from '../config/constants.js';
 
 const messageSchema = new mongoose.Schema(
   {
@@ -16,6 +17,8 @@ const messageSchema = new mongoose.Schema(
     // Calificación de calidad que el dueño/agente da a una respuesta del bot
     // ('up' buena / 'down' mala). Sirve para detectar respuestas a mejorar.
     rating: { type: String, enum: ['up', 'down', null], default: null },
+    // Mensaje de seguimiento automático (el cliente había dejado de responder).
+    followUp: { type: Boolean, default: undefined },
     timestamp: { type: Date, default: Date.now },
   },
   { _id: false }
@@ -39,7 +42,7 @@ const chatSimulationSchema = new mongoose.Schema(
     // multicanal (misma infra de Meta Graph API → solo se agrega su adaptador).
     channel: {
       type: String,
-      enum: ['simulator', 'whatsapp', 'instagram', 'facebook'],
+      enum: ['simulator', 'whatsapp', 'instagram', 'facebook', 'web'],
       default: 'simulator',
     },
     // Datos del cliente real (vacíos en el simulador).
@@ -68,11 +71,24 @@ const chatSimulationSchema = new mongoose.Schema(
     hotLead: { type: Boolean, default: false },
     hotLeadReason: { type: String, default: '' },
     hotLeadAt: { type: Date, default: null },
+    // Último seguimiento automático enviado. Solo se manda uno por cada silencio
+    // del cliente (se vuelve a permitir cuando el cliente escribe de nuevo).
+    followUpAt: { type: Date, default: null },
   },
   { timestamps: true }
 );
 
 // Ubicar rápido la conversación abierta de un cliente de WhatsApp por su teléfono.
 chatSimulationSchema.index({ business: 1, channel: 1, customerPhone: 1 });
+
+// Canales sin teléfono (Messenger por PSID, widget web por sesión).
+chatSimulationSchema.index({ business: 1, channel: 1, customerId: 1 });
+
+// Retención: MongoDB borra solo las conversaciones sin actividad (updatedAt) por
+// más de CONVERSATION_RETENTION_DAYS. Cada mensaje nuevo actualiza updatedAt.
+chatSimulationSchema.index(
+  { updatedAt: 1 },
+  { expireAfterSeconds: CONVERSATION_RETENTION_DAYS * 24 * 60 * 60 }
+);
 
 export const ChatSimulation = mongoose.model('ChatSimulation', chatSimulationSchema);

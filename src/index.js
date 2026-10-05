@@ -2,6 +2,7 @@ import { createApp } from './app.js';
 import { connectDB } from './config/db.js';
 import { env } from './config/env.js';
 import { logger } from './utils/logger.js';
+import { startFollowUpScheduler } from './services/followUp.service.js';
 
 /**
  * Punto de entrada: conecta a la base de datos y arranca el servidor HTTP.
@@ -14,6 +15,9 @@ async function start() {
   const server = app.listen(env.port, () => {
     logger.info(`Servidor escuchando en http://localhost:${env.port} (${env.nodeEnv})`);
   });
+
+  // Seguimiento automático a clientes que dejaron de responder (Pro/Elite).
+  startFollowUpScheduler();
 
   // Apagado ordenado
   const shutdown = (signal) => {

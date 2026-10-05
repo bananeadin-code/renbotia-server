@@ -188,7 +188,7 @@ export const getAnalytics = asyncHandler(async (req, res) => {
   }
   const avgResponseMins = cnt ? Math.round((sum / cnt) * 10) / 10 : null;
 
-  const CH_LABELS = { simulator: 'Simulador', whatsapp: 'WhatsApp', instagram: 'Instagram', facebook: 'Messenger' };
+  const CH_LABELS = { simulator: 'Simulador', whatsapp: 'WhatsApp', instagram: 'Instagram', facebook: 'Messenger', web: 'Sitio web' };
   const REC_LABELS = { cita: 'Citas', reservacion: 'Reservaciones', pedido: 'Pedidos', prospecto: 'Prospectos' };
 
   res.json({

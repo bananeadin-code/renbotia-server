@@ -69,3 +69,19 @@ export const demoLimiter = rateLimit({
     message: 'Probaste la demo bastante. Crea una cuenta gratis para seguir con tu propio bot.',
   },
 });
+
+/**
+ * widgetLimiter: chat web PÚBLICO incrustado en sitios de clientes. Cada mensaje
+ * consume créditos del negocio, así que se acota por IP (un visitante real no
+ * escribe 30 mensajes en 5 minutos).
+ */
+export const widgetLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Estás enviando mensajes muy rápido. Espera un momento.',
+  },
+});
