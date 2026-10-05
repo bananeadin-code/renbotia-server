@@ -19,7 +19,7 @@ const RESEND_ENDPOINT = 'https://api.resend.com/emails';
  * @param {{ to: string, subject: string, html: string }} msg
  * @returns {Promise<{ ok?: boolean, skipped?: boolean, id?: string, status?: number, error?: string }>}
  */
-export async function sendEmail({ to, subject, html, replyTo }) {
+export async function sendEmail({ to, subject, html, replyTo, attachments }) {
   if (!env.resend.apiKey) {
     logger.warn('[email] RESEND_API_KEY no configurada; se omite el envío.');
     return { skipped: true };
@@ -46,6 +46,8 @@ export async function sendEmail({ to, subject, html, replyTo }) {
         subject,
         html,
         ...(replyToAddr ? { reply_to: replyToAddr } : {}),
+        // Adjuntos opcionales: [{ filename, content (base64) }] (p. ej. respaldos).
+        ...(attachments?.length ? { attachments } : {}),
       }),
     });
 

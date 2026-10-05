@@ -1,7 +1,37 @@
 # Respaldos de MongoDB — RenBotIA
 
 Objetivo: nunca perder datos de clientes (negocios, bots, conversaciones, pagos).
-Haz esto **antes** de producción, no después de un susto.
+
+## 0. Respaldo GRATIS por correo (recomendado mientras no haya backups de Atlas)
+
+El servidor genera un respaldo de TODA la base, comprimido y **cifrado**
+(AES-256-GCM), y te lo manda por correo como archivo `.rbk`.
+
+**Variables en Render:**
+- `BACKUP_EMAIL` — a dónde llega el respaldo.
+- `BACKUP_PASSPHRASE` — frase para cifrarlo (mín. 12 caracteres). **Guárdala en
+  tu gestor de contraseñas: sin ella el respaldo no se puede abrir.**
+- `BACKUP_EVERY_DAYS` — opcional, cada cuántos días (por defecto 7).
+
+Con las dos primeras definidas, el servidor manda el respaldo solo (revisa cada
+6 h; el primero sale ~2 min después del arranque).
+
+**Respaldo inmediato** (Shell de Render): `node scripts/backup-now.mjs`
+
+**Ver / restaurar** (en tu computadora, desde `server/`):
+```bash
+BACKUP_PASSPHRASE="tu frase" node scripts/restore-backup.mjs renbotia-20261005-0300.rbk
+BACKUP_PASSPHRASE="tu frase" node scripts/restore-backup.mjs archivo.rbk --uri "mongodb+srv://..." --confirm
+```
+El primero solo muestra el contenido. El segundo restaura (se niega si la base
+destino tiene datos; `--drop` los reemplaza). Restaura primero en una base NUEVA.
+
+Límite: si el respaldo supera ~28 MB ya no cabe como adjunto (el correo avisa).
+Ese es el momento de activar los backups de Atlas.
+
+---
+
+## Método alterno: mongodump (requiere acceso directo a la base)
 
 ## 1. Instala las herramientas
 
