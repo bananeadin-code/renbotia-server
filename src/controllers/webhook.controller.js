@@ -4,7 +4,12 @@ import { Business } from '../models/Business.js';
 import { ChatSimulation } from '../models/ChatSimulation.js';
 import { processMessage } from '../services/simulator.service.js';
 import { verifySignature, sendText, sendImage, downloadMedia } from '../services/whatsapp.service.js';
-import { sendMessengerText } from '../services/messenger.service.js';
+import {
+  sendMessengerText,
+  sendMessengerImage,
+  getMessengerProfileName,
+  downloadMessengerImage,
+} from '../services/messenger.service.js';
 
 /**
  * Webhook de WhatsApp Cloud API (Meta).
@@ -211,17 +216,34 @@ async function handleMessengerMessage({ business, event }) {
   if (!senderId) return;
 
   const pageToken = business.facebookPageToken;
-  const text = (msg.text || '').trim();
+  let text = (msg.text || '').trim();
+  let image = null;
   if (!text) {
-    // Adjuntos (imágenes, stickers…): por ahora solo texto en Messenger.
-    if (msg.attachments?.length) {
-      await sendMessengerText({
-        pageToken,
-        recipientId: senderId,
-        text: 'Por ahora puedo leer texto por aquí. ¿Me escribes tu duda?',
-      });
+    // Imagen del cliente: se descarga y se pasa al bot (la visión solo se usa en
+    // Elite; lo decide processMessage). Otros adjuntos (audio, stickers…): aviso.
+    const att = (msg.attachments || []).find((a) => a.type === 'image' && a.payload?.url && !a.payload?.sticker_id);
+    if (att) {
+      const media = await downloadMessengerImage(att.payload.url);
+      if (media.ok) {
+        image = { mediaType: media.mime, data: media.base64 };
+      } else {
+        await sendMessengerText({
+          pageToken,
+          recipientId: senderId,
+          text: 'No pude abrir esa imagen. ¿Puedes reenviarla o escribirme el detalle por aquí?',
+        });
+        return;
+      }
+    } else {
+      if (msg.attachments?.length) {
+        await sendMessengerText({
+          pageToken,
+          recipientId: senderId,
+          text: 'Por ahora puedo leer texto e imágenes. ¿Me lo escribes por aquí?',
+        });
+      }
+      return;
     }
-    return;
   }
 
   // Continuar la conversación abierta de este cliente (por PSID).
@@ -231,14 +253,26 @@ async function handleMessengerMessage({ business, event }) {
     customerId: senderId,
   }).sort({ updatedAt: -1 });
 
+  // Nombre del cliente (perfil de Messenger): solo si aún no lo tenemos, para no
+  // consultar a Meta en cada mensaje.
+  let customerName = existing?.customerName || '';
+  if (!customerName) {
+    customerName = await getMessengerProfileName(senderId, pageToken);
+    if (existing && customerName) {
+      existing.customerName = customerName;
+      await existing.save().catch(() => {});
+    }
+  }
+
   try {
     const result = await processMessage({
       businessId: business._id,
       business,
       message: text,
+      image,
       chatId: existing?._id,
       channel: 'facebook',
-      customer: { id: senderId },
+      customer: { id: senderId, name: customerName },
       source: 'facebook',
     });
 
@@ -247,8 +281,11 @@ async function handleMessengerMessage({ business, event }) {
       const sent = await sendMessengerText({ pageToken, recipientId: senderId, text: result.reply });
       if (sent.ok) logger.info(`Messenger: respuesta enviada a ${senderId}.`);
     }
-    // Las imágenes del bot (data URI) aún no se envían por Messenger (requieren
-    // subir el adjunto a Meta); se omiten sin romper el flujo.
+    // Imágenes que el bot decidió enviar (Elite): tras el texto, en orden.
+    for (const img of result?.sentImages || []) {
+      const r = await sendMessengerImage({ pageToken, recipientId: senderId, image: img });
+      if (!r?.ok) logger.error(`Messenger: no se pudo enviar la imagen "${img?.label}": ${r?.error}`);
+    }
   } catch (err) {
     if (err.statusCode === 402) {
       logger.warn(`Messenger: negocio ${business._id} sin créditos; mensaje no atendido.`);

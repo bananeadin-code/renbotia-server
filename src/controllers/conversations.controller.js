@@ -43,7 +43,7 @@ export const listConversations = asyncHandler(async (req, res) => {
       // Lead caliente: el bot detectó alta intención de compra (oportunidad).
       hotLead: Boolean(c.hotLead),
       hotLeadReason: c.hotLeadReason || '',
-      // Ventana de 24h (solo WhatsApp; null en simulador/otros canales).
+      // Ventana de 24h (WhatsApp y Messenger; null en el simulador).
       whatsappWindow: computeServiceWindow(c),
     };
   });
@@ -130,17 +130,18 @@ export const replyAsAgent = asyncHandler(async (req, res) => {
 
   const text = req.body.message.trim();
 
-  // WhatsApp: fuera de la ventana de 24h NO se puede enviar texto libre (Meta lo
-  // rechaza). Se bloquea aquí para orientar al agente a usar una plantilla.
-  if (chat.channel === 'whatsapp') {
-    const win = computeServiceWindow(chat);
-    if (win && !win.open) {
-      throw new ApiError(
-        409,
-        'La ventana de 24 horas está cerrada. Para reactivar esta conversación, envía una plantilla aprobada.',
-        { code: 'WINDOW_CLOSED' }
-      );
-    }
+  // Fuera de la ventana de 24h Meta rechaza el texto libre. Se bloquea aquí para
+  // orientar al agente: en WhatsApp con una plantilla; en Messenger, esperar a
+  // que el cliente vuelva a escribir.
+  const win = computeServiceWindow(chat);
+  if (win && !win.open) {
+    throw new ApiError(
+      409,
+      chat.channel === 'facebook'
+        ? 'Pasaron más de 24 horas desde el último mensaje del cliente. Messenger no permite responder hasta que vuelva a escribir.'
+        : 'La ventana de 24 horas está cerrada. Para reactivar esta conversación, envía una plantilla aprobada.',
+      { code: 'WINDOW_CLOSED' }
+    );
   }
 
   chat.messages.push({ role: 'assistant', content: text, via: 'agent', timestamp: new Date() });
@@ -170,8 +171,7 @@ export const replyAsAgent = asyncHandler(async (req, res) => {
       text,
     });
     if (!result.ok) {
-      sendWarning =
-        'El mensaje se guardó, pero no se pudo entregar por Messenger. Si pasaron más de 24 h desde el último mensaje del cliente, Messenger no permite responder.';
+      sendWarning = 'El mensaje se guardó, pero no se pudo entregar por Messenger. Intenta de nuevo en un momento.';
     }
   }
 
