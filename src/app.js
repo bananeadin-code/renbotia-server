@@ -31,10 +31,16 @@ export function createApp() {
     })
   );
 
-  // CORS con credenciales para permitir la cookie del refresh token
+  // CORS con credenciales para permitir la cookie del refresh token. El panel
+  // llama a la API directo (api.renbotia.com → Render) desde CLIENT_URL; con
+  // CORS_EXTRA_ORIGINS (separados por coma) se admiten otros orígenes propios
+  // (p. ej. www). Nunca '*' con credenciales.
+  const allowedOrigins = [env.clientUrl, ...String(process.env.CORS_EXTRA_ORIGINS || '').split(',')]
+    .map((o) => o.trim().replace(/\/$/, ''))
+    .filter(Boolean);
   app.use(
     cors({
-      origin: env.clientUrl,
+      origin: allowedOrigins.length === 1 ? allowedOrigins[0] : allowedOrigins,
       credentials: true,
     })
   );
