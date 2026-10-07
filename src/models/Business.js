@@ -96,6 +96,8 @@ const businessSchema = new mongoose.Schema(
         iceBreakers: { type: [String], default: [] },
       },
     },
+    // Último resumen semanal "Aprende de ti" enviado al dueño.
+    learningDigestAt: { type: Date, default: null },
     // ── Widget web (chat incrustable en el sitio del negocio; Pro/Elite) ──
     // `key` es PÚBLICA (va en el snippet): identifica el negocio, no da acceso al
     // panel. Se genera al activarlo y se puede regenerar para invalidar copias.

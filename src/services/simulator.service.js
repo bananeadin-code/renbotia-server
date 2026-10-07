@@ -16,6 +16,7 @@ import { sendEscalationEmail, sendHotLeadEmail } from './email.service.js';
 import { sanitizeBotConfigForPlan } from '../utils/planGating.js';
 import { MODEL_BY_PLAN } from '../config/constants.js';
 import { botAvailability, describeSchedule } from '../utils/botAvailability.js';
+import { recordSuggestion } from './learning.service.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 
@@ -309,6 +310,12 @@ export async function processMessage({
     if (!wasHot) chat.hotLeadAt = new Date();
   }
   await chat.save();
+
+  // Aprende de ti: si el bot pidió ayuda humana, lo que preguntó el cliente
+  // queda como pendiente por enseñar (canales reales; el simulador es prueba).
+  if (escalation.flagged && source !== 'simulator' && !image) {
+    void recordSuggestion({ businessId, chatId: chat._id, source: 'escalation', question: userText });
+  }
 
   // Aviso por correo al dueño cuando escala por PRIMERA vez (wasFlagged=false) y
   // es un canal REAL (no el simulador, que es una prueba). Fire-and-forget.

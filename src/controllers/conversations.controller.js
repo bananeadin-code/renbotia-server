@@ -10,6 +10,7 @@ import { sendInstagramText } from '../services/instagram.service.js';
 import { summarizeConversation } from '../services/conversationSummary.service.js';
 import { computeServiceWindow } from '../utils/whatsappWindow.js';
 import { toCsv } from '../utils/csv.js';
+import { recordSuggestion, lastCustomerMessage, dropPending } from '../services/learning.service.js';
 import { CONVERSATION_RETENTION_DAYS } from '../config/constants.js';
 
 /**
@@ -149,6 +150,8 @@ export const replyAsAgent = asyncHandler(async (req, res) => {
     );
   }
 
+  // Aprende de ti: lo que el cliente preguntó y la persona contestó.
+  const customerQuestion = lastCustomerMessage(chat);
   chat.messages.push({ role: 'assistant', content: text, via: 'agent', timestamp: new Date() });
   chat.handoffMode = 'manual'; // responder como humano implica tomar el control
   chat.needsAttention = false;
@@ -193,7 +196,26 @@ export const replyAsAgent = asyncHandler(async (req, res) => {
     }
   }
 
-  res.json({ success: true, data: { conversation: chat, sendWarning } });
+  // Se propone al dueño que el bot aprenda esta respuesta (en la bandeja y en
+  // Entrenamiento). Solo si hubo una pregunta del cliente a la que responde.
+  const suggestion = customerQuestion
+    ? await recordSuggestion({
+        businessId: req.businessId,
+        chatId: chat._id,
+        source: 'agent',
+        question: customerQuestion,
+        answer: text,
+      })
+    : null;
+
+  res.json({
+    success: true,
+    data: {
+      conversation: chat,
+      sendWarning,
+      suggestion: suggestion ? { id: suggestion._id, question: suggestion.question, answer: suggestion.answer } : null,
+    },
+  });
 });
 
 export const templateSchema = z.object({
@@ -322,7 +344,17 @@ export const rateMessage = asyncHandler(async (req, res) => {
   if (!msg || msg.role !== 'assistant') {
     throw ApiError.badRequest('Solo se pueden calificar respuestas del asistente.');
   }
+  const prev = msg.rating;
   msg.rating = req.body.rating; // 'up' | 'down' | null (para quitar la calificación)
   await chat.save();
+
+  // Aprende de ti: una respuesta mal calificada queda como pendiente por enseñar
+  // (con la pregunta del cliente); si se quita el "mal", se retira.
+  const question = lastCustomerMessage(chat, req.body.index);
+  if (question && req.body.rating === 'down' && prev !== 'down') {
+    await recordSuggestion({ businessId: req.businessId, chatId: chat._id, source: 'rating', question });
+  } else if (question && prev === 'down' && req.body.rating !== 'down') {
+    await dropPending({ businessId: req.businessId, question, source: 'rating' });
+  }
   res.json({ success: true, data: { conversation: chat } });
 });
