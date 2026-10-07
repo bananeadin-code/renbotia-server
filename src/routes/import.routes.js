@@ -2,21 +2,38 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { requireAuth } from '../middleware/auth.middleware.js';
 import { validate } from '../middleware/validate.middleware.js';
-import { importTraining, importSchema } from '../controllers/import.controller.js';
+import { asyncHandler } from '../utils/asyncHandler.js';
+import { Business } from '../models/Business.js';
+import { Subscription } from '../models/Subscription.js';
+import '../models/Plan.js';
+import { importTraining, importSchema, IMPORT_LIMITS } from '../controllers/import.controller.js';
 
 const router = Router();
 
-// Sin requireBusiness: también se usa en el registro inicial (aún no hay negocio).
-// Cada análisis llama a Claude con mucho texto: límite por usuario.
+/**
+ * Plan del usuario para la importación. Sin requireBusiness: también se usa en el
+ * registro inicial (aún no hay negocio), y ahí cuenta como Free.
+ */
+const resolveImportPlan = asyncHandler(async (req, res, next) => {
+  const business = await Business.findOne({ owner: req.userId }).select('_id').lean();
+  const sub = business ? await Subscription.findOne({ business: business._id }).populate('plan', 'key').lean() : null;
+  req.importPlan = sub?.plan?.key || 'free';
+  next();
+});
+
+// Cada análisis llama a Claude con mucho texto: límite diario por usuario y plan.
 const importLimiter = rateLimit({
   windowMs: 24 * 60 * 60 * 1000,
-  max: 12,
+  max: (req) => (IMPORT_LIMITS[req.importPlan] || IMPORT_LIMITS.free).perDay,
   keyGenerator: (req) => String(req.userId || req.ip),
   standardHeaders: true,
   legacyHeaders: false,
-  message: { success: false, message: 'Ya analizaste varios materiales hoy. Intenta de nuevo mañana.' },
+  message: {
+    success: false,
+    message: 'Ya usaste tus análisis de hoy. Intenta mañana o mejora tu plan para analizar más.',
+  },
 });
 
-router.post('/', requireAuth, importLimiter, validate(importSchema), importTraining);
+router.post('/', requireAuth, resolveImportPlan, importLimiter, validate(importSchema), importTraining);
 
 export default router;

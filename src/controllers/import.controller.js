@@ -4,6 +4,7 @@ import { ApiError } from '../utils/ApiError.js';
 import { generateReply } from '../services/claude.service.js';
 import { readSiteText } from '../services/siteReader.service.js';
 import { logger } from '../utils/logger.js';
+import { MODEL_BY_PLAN } from '../config/constants.js';
 
 /**
  * "Se entrena solo": propone el entrenamiento del bot a partir de lo que el
@@ -16,6 +17,18 @@ import { logger } from '../utils/logger.js';
  */
 
 const MAX_TEXT = 60000;
+
+/**
+ * Límites por plan. Free: menos material, modelo económico (Haiku), pocas
+ * preguntas propuestas y pocos análisis al día: su entrenamiento solo guarda 2
+ * preguntas frecuentes, no tiene caso analizar 60 mil caracteres con Sonnet.
+ * Pro/Elite: análisis completo con el modelo del plan.
+ */
+export const IMPORT_LIMITS = {
+  free: { chars: 15000, faqs: 4, perDay: 3, model: MODEL_BY_PLAN.free, maxTokens: 1500 },
+  pro: { chars: 40000, faqs: 10, perDay: 10, model: MODEL_BY_PLAN.pro, maxTokens: 3000 },
+  elite: { chars: MAX_TEXT, faqs: 10, perDay: 20, model: MODEL_BY_PLAN.elite, maxTokens: 3000 },
+};
 
 export const importSchema = z
   .object({
@@ -46,6 +59,7 @@ const TONES = ['formal', 'cercano', 'neutral', 'tecnico'];
 /** POST /api/import — propuesta de entrenamiento a partir de chats, sitio o texto. */
 export const importTraining = asyncHandler(async (req, res) => {
   const { source, url } = req.body;
+  const lim = IMPORT_LIMITS[req.importPlan] || IMPORT_LIMITS.free;
   let material = req.body.text || '';
 
   if (source === 'site') {
@@ -60,15 +74,21 @@ export const importTraining = asyncHandler(async (req, res) => {
     }
   }
   // En chats lo más útil es lo más reciente: si es muy largo, se queda el final.
-  if (material.length > MAX_TEXT) material = source === 'chat' ? material.slice(-MAX_TEXT) : material.slice(0, MAX_TEXT);
+  if (material.length > lim.chars) material = source === 'chat' ? material.slice(-lim.chars) : material.slice(0, lim.chars);
 
   const label = { chat: 'conversaciones de WhatsApp', site: 'texto del sitio web', text: 'texto del negocio' }[source];
   let raw;
   try {
     const r = await generateReply({
       system: SYSTEM,
-      messages: [{ role: 'user', content: `Material (${label}):\n<material>\n${material}\n</material>` }],
-      maxTokens: 3000,
+      messages: [
+        {
+          role: 'user',
+          content: `Material (${label}). Propón como máximo ${lim.faqs} preguntas frecuentes, las más importantes.\n<material>\n${material}\n</material>`,
+        },
+      ],
+      model: lim.model,
+      maxTokens: lim.maxTokens,
     });
     raw = r.text;
   } catch (err) {
@@ -100,7 +120,7 @@ export const importTraining = asyncHandler(async (req, res) => {
       faqs: (Array.isArray(data.faqs) ? data.faqs : [])
         .map((f) => ({ question: clip(f?.question, 300), answer: clip(f?.answer, 800) }))
         .filter((f) => f.question.length >= 3 && f.answer.length >= 3)
-        .slice(0, 10),
+        .slice(0, lim.faqs),
     },
   });
 });
