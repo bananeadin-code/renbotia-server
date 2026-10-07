@@ -12,6 +12,7 @@ export const registerSchema = z.object({
   name: z.string().min(2, 'El nombre debe tener al menos 2 caracteres'),
   email: z.string().email('Email inválido'),
   password: z.string().min(8, 'La contraseña debe tener al menos 8 caracteres'),
+  ref: z.string().max(16).optional(), // código de referido (enlace de invitación)
 });
 
 export const loginSchema = z.object({
@@ -129,10 +130,13 @@ export const verifyEmailChange = asyncHandler(async (req, res) => {
   res.json({ success: true, data: { user } });
 });
 
-export const googleSchema = z.object({ credential: z.string().min(20, 'Credencial de Google inválida') });
+export const googleSchema = z.object({
+  credential: z.string().min(20, 'Credencial de Google inválida'),
+  ref: z.string().max(16).optional(), // código de referido (solo cuenta en cuentas nuevas)
+});
 
 export const googleAuth = asyncHandler(async (req, res) => {
-  const result = await authService.googleAuth(req.body.credential);
+  const result = await authService.googleAuth(req.body.credential, req.body.ref);
   sendAuthResponse(res, result);
 });
 

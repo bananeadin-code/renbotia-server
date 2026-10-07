@@ -14,6 +14,7 @@ import {
 } from '../utils/jwt.js';
 import { sendOtp, verifyOtp } from './otp.service.js';
 import { logger } from '../utils/logger.js';
+import { resolveReferrer } from './referral.service.js';
 
 /**
  * Lógica de negocio de autenticación, sin acoplarse a req/res.
@@ -31,7 +32,7 @@ function issueTokens(user) {
   };
 }
 
-export async function registerUser({ name, email, password }) {
+export async function registerUser({ name, email, password, ref }) {
   // Bloqueo de correos desechables/temporales (anti-abuso de cuentas Free).
   if (isDisposableEmail(email)) {
     throw ApiError.badRequest(
@@ -45,7 +46,7 @@ export async function registerUser({ name, email, password }) {
   }
 
   // La cuenta se crea SIN verificar: primero debe confirmar el código del correo.
-  const user = new User({ name, email, emailVerified: false });
+  const user = new User({ name, email, emailVerified: false, referredBy: await resolveReferrer(ref) });
   await user.setPassword(password);
   await user.save();
 
@@ -219,7 +220,7 @@ function getGoogleClient() {
  * Si el correo ya tiene cuenta, la vincula; si no, crea una cuenta sin contraseña.
  * @param {string} credential - ID token JWT emitido por Google Identity Services
  */
-export async function googleAuth(credential) {
+export async function googleAuth(credential, ref) {
   const client = getGoogleClient();
   let payload;
   try {
@@ -254,7 +255,7 @@ export async function googleAuth(credential) {
       if (changed) await user.save();
     } else {
       // Cuenta nueva por Google: verificada de origen y sin 2FA (Google autentica).
-      user = new User({ name, email, googleId, emailVerified: true });
+      user = new User({ name, email, googleId, emailVerified: true, referredBy: await resolveReferrer(ref) });
       await user.save();
       void sendWelcomeEmail({ to: user.email, customerName: user.name });
     }

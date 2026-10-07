@@ -51,9 +51,19 @@ const userSchema = new mongoose.Schema(
     // (fuerza bruta dirigida a UNA cuenta; complementa el rate-limit por IP).
     failedLoginAttempts: { type: Number, default: 0 },
     lockUntil: { type: Date },
+    // ── Referidos ──
+    // Código para invitar (se crea al pedirlo), quién lo invitó, cuándo contó como
+    // referido (al crear su negocio) y cuántas recompensas lleva ganadas.
+    referralCode: { type: String, default: undefined },
+    referredBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null, index: true },
+    referralQualifiedAt: { type: Date, default: null },
+    referralRewards: { type: Number, default: 0 },
   },
   { timestamps: true }
 );
+
+// Código de referido único (solo los que ya lo generaron).
+userSchema.index({ referralCode: 1 }, { unique: true, partialFilterExpression: { referralCode: { $type: 'string' } } });
 
 /**
  * Método de instancia para fijar la contraseña generando el hash.

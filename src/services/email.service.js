@@ -8,6 +8,7 @@ import { escalationEmail } from '../emails/escalation.js';
 import { hotLeadEmail } from '../emails/hotLead.js';
 import { contactEmail } from '../emails/contact.js';
 import { weeklyReportEmail } from '../emails/weeklyReport.js';
+import { referralRewardEmail } from '../emails/referralReward.js';
 import { User } from '../models/User.js';
 
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
@@ -234,3 +235,16 @@ export async function sendWeeklyReportEmail(p) {
     return { ok: false, error: err.message };
   }
 }
+
+/** Aviso de recompensa por referidos. Fail-open. */
+export async function sendReferralRewardEmail(p) {
+  try {
+    if (!p.to) return { skipped: true };
+    const { subject, html } = referralRewardEmail(p);
+    return await sendEmail({ to: p.to, subject, html });
+  } catch (err) {
+    logger.warn(`[email] No se pudo enviar el aviso de referidos: ${err.message}`);
+    return { ok: false, error: err.message };
+  }
+}
+

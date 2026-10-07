@@ -23,6 +23,7 @@ import widgetRoutes from './widget.routes.js';
 import mediaRoutes from './media.routes.js';
 import learningRoutes from './learning.routes.js';
 import importRoutes from './import.routes.js';
+import referralRoutes from './referral.routes.js';
 import { runFollowUps } from '../services/followUp.service.js';
 
 /**
@@ -75,6 +76,7 @@ router.use('/management', managementRoutes);
 router.use('/conversations', conversationRoutes);
 router.use('/connections', connectionRoutes);
 router.use('/learning', learningRoutes); // Aprende de ti
+router.use('/referrals', referralRoutes); // invita y gana
 router.use('/import', importRoutes); // entrenar desde chats, sitio o texto
 router.use('/media', mediaRoutes); // público: imágenes del bot por URL (Instagram)
 router.use('/widget', widgetRoutes); // panel + público (chat web incrustable)
