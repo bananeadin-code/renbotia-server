@@ -1,4 +1,5 @@
 import { ApiError } from '../utils/ApiError.js';
+import { alertOps } from '../services/alert.service.js';
 import { logger } from '../utils/logger.js';
 import { isProd } from '../config/env.js';
 
@@ -52,6 +53,11 @@ export function errorHandler(err, req, res, next) {
   // Los errores 5xx son bugs inesperados: log con stack completo.
   if (statusCode >= 500) {
     logger.error(`${req.method} ${req.originalUrl} → ${err.stack || err.message}`);
+    alertOps({
+      kind: 'http_500',
+      message: `${req.method} ${req.baseUrl || ''}${req.route?.path || req.path} → ${err.message}`,
+      detail: err.stack,
+    });
   } else {
     logger.warn(`${req.method} ${req.originalUrl} → ${statusCode} ${message}`);
   }

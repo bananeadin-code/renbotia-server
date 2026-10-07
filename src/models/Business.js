@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { seal, open } from '../utils/secretBox.js';
 import { BUSINESS_STATUS } from '../config/constants.js';
 
 /**
@@ -69,7 +70,8 @@ const businessSchema = new mongoose.Schema(
     // (sensible → select:false, no sale en consultas normales) se usa para enviar.
     facebookPageId: { type: String, trim: true, default: '' }, // índice único parcial abajo
     facebookPageName: { type: String, trim: true, default: '' },
-    facebookPageToken: { type: String, default: '', select: false },
+    // Cifrado en reposo (utils/secretBox.js): se guarda cifrado y se lee en claro.
+    facebookPageToken: { type: String, default: '', select: false, set: seal, get: open },
     facebookConnectedAt: { type: Date, default: null },
     // ── Instagram DMs ───────────────────────────────────────────────────────
     // Cuenta profesional de Instagram ligada a una Página de Facebook. El id de
@@ -78,7 +80,7 @@ const businessSchema = new mongoose.Schema(
     instagramAccountId: { type: String, trim: true, default: '' }, // índice único parcial abajo
     instagramUsername: { type: String, trim: true, default: '' },
     instagramPageId: { type: String, trim: true, default: '' },
-    instagramPageToken: { type: String, default: '', select: false },
+    instagramPageToken: { type: String, default: '', select: false, set: seal, get: open },
     instagramConnectedAt: { type: Date, default: null },
     // ── Ajustes por canal ──
     // paused: el canal sigue conectado y los mensajes llegan a la bandeja, pero

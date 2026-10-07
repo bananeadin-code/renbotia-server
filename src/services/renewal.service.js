@@ -1,4 +1,5 @@
 import { Subscription } from '../models/Subscription.js';
+import { alertOps } from './alert.service.js';
 import { Plan } from '../models/Plan.js';
 import { Business } from '../models/Business.js';
 import { BillingProfile } from '../models/BillingProfile.js';
@@ -401,6 +402,7 @@ export async function runRenewals(now = new Date()) {
         if (r in result) result[r] += 1;
       } catch (err) {
         logger.error(`Renovación: error con suscripción ${_id}: ${err.message}`);
+        alertOps({ kind: 'renewal', message: `Error al renovar ${_id}: ${err.message}`, detail: err.stack });
       }
     }
     result.reminders = await sendUpcomingReminders(now).catch((err) => {

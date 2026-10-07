@@ -1,4 +1,5 @@
 import { createApp } from './app.js';
+import { installProcessAlerts } from './services/alert.service.js';
 import { connectDB } from './config/db.js';
 import { env } from './config/env.js';
 import { logger } from './utils/logger.js';
@@ -6,12 +7,17 @@ import { startFollowUpScheduler } from './services/followUp.service.js';
 import { startBackupScheduler } from './services/backup.service.js';
 import { startWeeklyReportScheduler } from './services/weeklyReport.service.js';
 import { startRenewalScheduler } from './services/renewal.service.js';
+import { encryptLegacySecrets } from './services/encryptSecrets.service.js';
 
 /**
  * Punto de entrada: conecta a la base de datos y arranca el servidor HTTP.
  */
 async function start() {
+  installProcessAlerts();
   await connectDB();
+
+  // Cifra tokens de Página guardados en claro (idempotente, no bloquea el arranque).
+  encryptLegacySecrets().catch((err) => logger.error(`Cifrado de tokens: ${err.message}`));
 
   const app = createApp();
 
