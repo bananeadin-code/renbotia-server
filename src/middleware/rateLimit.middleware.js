@@ -126,10 +126,10 @@ export function dailyBudget(max, message) {
 }
 
 export const demoDailyBudget = dailyBudget(
-  Number(process.env.DEMO_DAILY_MAX) || 2000,
+  Number(process.env.DEMO_DAILY_MAX) || 500,
   'La demo está muy solicitada hoy. Crea tu cuenta gratis para probar tu propio bot.'
 );
 export const demoProfileDailyBudget = dailyBudget(
-  Number(process.env.DEMO_PROFILE_DAILY_MAX) || 300,
+  Number(process.env.DEMO_PROFILE_DAILY_MAX) || 50,
   'La demo está muy solicitada hoy. Crea tu cuenta gratis para probar tu propio bot.'
 );
