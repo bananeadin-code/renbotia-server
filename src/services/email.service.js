@@ -7,7 +7,7 @@ import { welcomeEmail } from '../emails/welcome.js';
 import { escalationEmail } from '../emails/escalation.js';
 import { hotLeadEmail } from '../emails/hotLead.js';
 import { contactEmail } from '../emails/contact.js';
-import { learningDigestEmail } from '../emails/learningDigest.js';
+import { weeklyReportEmail } from '../emails/weeklyReport.js';
 import { User } from '../models/User.js';
 
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
@@ -219,18 +219,18 @@ export async function sendLowBalanceEmail(p) {
 }
 
 /**
- * Resumen semanal "Aprende de ti" al dueño. Fail-open.
- * @param {{ userId:any, businessName?:string, items:Array<{question:string,source:string}>, total:number }} p
+ * Reporte semanal del lunes al dueño (resultados, leads y pendientes). Fail-open.
+ * @param {{ userId:any, businessName?:string, impact:object, leads:Array, learning:Array, learningTotal:number }} p
  */
-export async function sendLearningDigestEmail(p) {
+export async function sendWeeklyReportEmail(p) {
   try {
     const user = p.userId ? await User.findById(p.userId).select('email name').lean() : null;
     const to = p.to || user?.email;
     if (!to) return { skipped: true };
-    const { subject, html } = learningDigestEmail({ ...p, customerName: user?.name });
+    const { subject, html } = weeklyReportEmail({ ...p, customerName: user?.name });
     return await sendEmail({ to, subject, html });
   } catch (err) {
-    logger.warn(`[email] No se pudo enviar el resumen de aprendizaje: ${err.message}`);
+    logger.warn(`[email] No se pudo enviar el reporte semanal: ${err.message}`);
     return { ok: false, error: err.message };
   }
 }

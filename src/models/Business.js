@@ -96,8 +96,14 @@ const businessSchema = new mongoose.Schema(
         iceBreakers: { type: [String], default: [] },
       },
     },
-    // Último resumen semanal "Aprende de ti" enviado al dueño.
-    learningDigestAt: { type: Date, default: null },
+    // Reporte semanal del lunes (resultados, leads y pendientes por enseñar).
+    weeklyReport: { type: Boolean, default: true },
+    weeklyReportAt: { type: Date, default: null },
+    // Valores para estimar en pesos lo que genera el bot (los define el dueño).
+    roi: {
+      avgTicket: { type: Number, default: 0, min: 0 }, // venta/cita promedio en MXN
+      hourlyCost: { type: Number, default: 0, min: 0 }, // costo por hora de quien atendería (0 = valor por defecto)
+    },
     // ── Widget web (chat incrustable en el sitio del negocio; Pro/Elite) ──
     // `key` es PÚBLICA (va en el snippet): identifica el negocio, no da acceso al
     // panel. Se genera al activarlo y se puede regenerar para invalidar copias.

@@ -4,6 +4,7 @@ import { Subscription } from '../models/Subscription.js';
 import { ChatSimulation } from '../models/ChatSimulation.js';
 import { ManagedRecord } from '../models/ManagedRecord.js';
 import { applyLazyReset, computeBalance } from '../services/token.service.js';
+import { computeImpact } from '../services/impact.service.js';
 
 /**
  * Resumen de consumo para el dashboard:
@@ -39,39 +40,20 @@ export const getUsageSummary = asyncHandler(async (req, res) => {
 
 /**
  * GET /api/usage/impact
- * Reporte de IMPACTO/ROI del bot (retención): cuánto trabajó el bot este mes.
- * Datos duros (conversaciones, respuestas del bot, trabajo captado) + una
- * estimación honesta de tiempo ahorrado (~2 min por mensaje respondido).
+ * "Lo que generó tu bot" este mes (retención): datos reales de canales reales y
+ * su estimación en pesos con el ticket promedio y el costo por hora del negocio.
  */
 export const getImpactSummary = asyncHandler(async (req, res) => {
-  const businessId = req.businessId;
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-
-  const [conversations, botAgg, recordsCaptured, conversationsTotal] = await Promise.all([
-    ChatSimulation.countDocuments({ business: businessId, updatedAt: { $gte: startOfMonth } }),
-    ChatSimulation.aggregate([
-      { $match: { business: businessId } },
-      { $unwind: '$messages' },
-      { $match: { 'messages.role': 'assistant', 'messages.timestamp': { $gte: startOfMonth } } },
-      { $count: 'n' },
-    ]),
-    ManagedRecord.countDocuments({ business: businessId, createdAt: { $gte: startOfMonth } }),
-    ChatSimulation.countDocuments({ business: businessId }),
-  ]);
-
-  const botReplies = botAgg[0]?.n || 0;
-  const hoursSaved = Math.round((botReplies * 2) / 60 * 10) / 10; // ~2 min por respuesta
-
+  const impact = await computeImpact(req.businessId, startOfMonth, now);
+  const weeklyReport = req.business?.weeklyReport !== false;
   res.json({
     success: true,
     data: {
       month: now.toLocaleDateString('es-MX', { month: 'long', year: 'numeric' }),
-      conversations,
-      botReplies,
-      recordsCaptured,
-      hoursSaved,
-      conversationsTotal,
+      ...impact,
+      weeklyReport,
     },
   });
 });

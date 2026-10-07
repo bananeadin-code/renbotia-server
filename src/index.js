@@ -4,7 +4,7 @@ import { env } from './config/env.js';
 import { logger } from './utils/logger.js';
 import { startFollowUpScheduler } from './services/followUp.service.js';
 import { startBackupScheduler } from './services/backup.service.js';
-import { startLearningDigestScheduler } from './services/learning.service.js';
+import { startWeeklyReportScheduler } from './services/weeklyReport.service.js';
 
 /**
  * Punto de entrada: conecta a la base de datos y arranca el servidor HTTP.
@@ -22,8 +22,8 @@ async function start() {
   startFollowUpScheduler();
   // Respaldo cifrado por correo (gratis, mientras no haya backups de Atlas).
   startBackupScheduler();
-  // Resumen semanal de Aprende de ti al dueño.
-  startLearningDigestScheduler();
+  // Reporte semanal del lunes al dueño (resultados en pesos, leads y pendientes).
+  startWeeklyReportScheduler();
 
   // Apagado ordenado
   const shutdown = (signal) => {

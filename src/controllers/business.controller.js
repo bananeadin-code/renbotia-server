@@ -23,6 +23,14 @@ export const updateBusinessSchema = z.object({
     .max(200_000, 'La imagen es muy grande.')
     .refine((v) => v === '' || /^data:image\/(png|jpe?g|webp);base64,/.test(v), 'Formato de imagen no válido.')
     .optional(),
+  // Valores para estimar en pesos lo que genera el bot (Inicio → Lo que generó tu bot).
+  roi: z
+    .object({
+      avgTicket: z.number().min(0).max(10_000_000),
+      hourlyCost: z.number().min(0).max(100_000),
+    })
+    .optional(),
+  weeklyReport: z.boolean().optional(),
 });
 
 /**
