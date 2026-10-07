@@ -85,3 +85,19 @@ export const widgetLimiter = rateLimit({
     message: 'Estás enviando mensajes muy rápido. Espera un momento.',
   },
 });
+
+/**
+ * demoProfileLimiter: "Pruébalo con tu negocio" lee un sitio y llama a Claude para
+ * armar el perfil. Pocas veces por IP (una persona real lo hace 1 o 2 veces).
+ */
+export const demoProfileLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 6,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Ya generaste varias demos. Crea tu cuenta gratis para seguir con tu propio bot.',
+  },
+});
+

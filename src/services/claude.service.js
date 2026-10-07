@@ -56,13 +56,14 @@ const MAX_OUTPUT_TOKENS = 500; // respuestas cortas estilo WhatsApp
  * @param {Array<{role:'user'|'assistant', content:string}>} params.messages - historial
  * @returns {Promise<{ text: string, inputTokens: number, outputTokens: number, totalTokens: number }>}
  */
-export async function generateReply({ system, messages, model }) {
+export async function generateReply({ system, messages, model, maxTokens }) {
   const anthropic = getClient();
 
   try {
     const response = await anthropic.messages.create({
       model: model || env.anthropic.model,
-      max_tokens: MAX_OUTPUT_TOKENS,
+      // maxTokens: tareas internas que devuelven más texto (p. ej. extraer un perfil en JSON).
+      max_tokens: maxTokens || MAX_OUTPUT_TOKENS,
       // Un solo caché de config+entrenamiento (system prompt), estable entre
       // mensajes. TTL 1h: persiste casi toda la sesión y se reconstruye solo al
       // editar el bot. Si el prompt es corto (<1024 tokens) la API no cachea, sin error.
