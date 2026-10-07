@@ -4,6 +4,8 @@
  * tono, FAQs, datos del negocio) se traduce aquí a instrucciones para Claude.
  */
 
+import { describeSchedule } from '../utils/botAvailability.js';
+
 const TONE_INSTRUCTIONS = {
   formal:
     'Usa un tono formal y profesional. Trata de usted. Evita modismos y emojis.',
@@ -151,7 +153,11 @@ export function buildSystemPrompt(botConfig, business, managementConfig = null) 
   const infoLines = [];
   const sector = businessSector(business);
   if (sector) infoLines.push(`- Sector / giro del negocio: ${sector}`);
-  if (info.hours) infoLines.push(`- Horario de atención: ${info.hours}`);
+  // Horario: el estructurado (Entrenamiento → Horario de atención) manda; el texto
+  // libre anterior queda solo como respaldo para negocios que no lo han activado.
+  const schedHours = botConfig.schedule?.enabled ? describeSchedule(botConfig.schedule) : '';
+  if (schedHours) infoLines.push(`- Horario de atención: ${schedHours}`);
+  else if (info.hours) infoLines.push(`- Horario de atención: ${info.hours}`);
   if (info.location) infoLines.push(`- Ubicación: ${info.location}`);
   if (Array.isArray(info.services) && info.services.length) {
     infoLines.push(`- Servicios: ${info.services.join(', ')}`);
