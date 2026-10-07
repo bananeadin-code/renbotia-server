@@ -26,6 +26,7 @@ import {
   listUserPages,
   subscribePageToApp,
   verifyUserToken,
+  syncMessengerProfile,
 } from '../services/messenger.service.js';
 import { listInstagramAccounts } from '../services/instagram.service.js';
 
@@ -98,7 +99,7 @@ const WHATSAPP_VERTICALS = [
 /** GET /api/connections — estado + config pública para inicializar el signup. */
 export const getConnections = asyncHandler(async (req, res) => {
   const business = await Business.findById(req.businessId).select(
-    'whatsappPhoneNumberId whatsappWabaId whatsappVerified facebookPageId facebookPageName instagramAccountId instagramUsername'
+    'whatsappPhoneNumberId whatsappWabaId whatsappVerified facebookPageId facebookPageName instagramAccountId instagramUsername channelSettings'
   );
   const planKey = await getPlanKey(req.businessId);
 
@@ -146,6 +147,8 @@ export const getConnections = asyncHandler(async (req, res) => {
         accountId: business?.instagramAccountId || '',
         username: business?.instagramUsername || '',
       },
+      // Ajustes por canal (pausa, preguntas iniciales, saludo).
+      settings: channelSettingsView(business),
       // Free = un canal a la vez; Pro/Elite = varios (para orientar en la UI).
       planKey,
       multiChannel: Boolean(PLAN_LIMITS[planKey]?.multiChannel),
@@ -281,6 +284,8 @@ async function linkPage(req, page) {
   business.facebookPageToken = page.access_token;
   business.facebookConnectedAt = new Date();
   await business.save();
+  // Reaplica las preguntas iniciales y el saludo guardados (si los hay).
+  void pushProfile(business, 'facebook');
 
   void logAudit({
     businessId: req.businessId,
@@ -436,6 +441,7 @@ async function linkInstagram(req, acc) {
   business.instagramPageToken = acc.pageToken;
   business.instagramConnectedAt = new Date();
   await business.save();
+  void pushProfile(business, 'instagram');
 
   void logAudit({
     businessId: req.businessId,
@@ -520,6 +526,94 @@ export const disconnectInstagram = asyncHandler(async (req, res) => {
     summary: 'Desconectó su cuenta de Instagram.',
   });
   res.json({ success: true, data: { connected: false } });
+});
+
+/* ─── Ajustes por canal ───────────────────────────────────────────────────────
+   Pausa del bot (sin desconectar), preguntas iniciales de Messenger/Instagram y
+   saludo de Messenger. Las dos últimas viven en Meta (messenger_profile): se
+   guardan aquí y se envían a Meta si el canal está conectado. */
+
+function channelSettingsView(business) {
+  const cs = business?.channelSettings || {};
+  return {
+    whatsapp: { paused: Boolean(cs.whatsapp?.paused) },
+    facebook: {
+      paused: Boolean(cs.facebook?.paused),
+      iceBreakers: cs.facebook?.iceBreakers || [],
+      greeting: cs.facebook?.greeting || '',
+    },
+    instagram: { paused: Boolean(cs.instagram?.paused), iceBreakers: cs.instagram?.iceBreakers || [] },
+  };
+}
+
+/** Envía a Meta las preguntas iniciales/saludo de un canal conectado. */
+async function pushProfile(business, channel) {
+  const cs = business.channelSettings?.[channel] || {};
+  if (channel === 'facebook') {
+    const b = business.facebookPageToken ? business : await Business.findById(business._id).select('+facebookPageToken');
+    if (!b?.facebookPageId || !b.facebookPageToken) return { ok: true, skipped: true };
+    return syncMessengerProfile({
+      pageToken: b.facebookPageToken,
+      platform: 'messenger',
+      iceBreakers: cs.iceBreakers || [],
+      greeting: cs.greeting || '',
+    });
+  }
+  if (channel === 'instagram') {
+    const b = business.instagramPageToken ? business : await Business.findById(business._id).select('+instagramPageToken');
+    if (!b?.instagramAccountId || !b.instagramPageToken) return { ok: true, skipped: true };
+    return syncMessengerProfile({ pageToken: b.instagramPageToken, platform: 'instagram', iceBreakers: cs.iceBreakers || [] });
+  }
+  return { ok: true, skipped: true };
+}
+
+const question = z.string().trim().min(2, 'Cada pregunta necesita al menos 2 caracteres.').max(80);
+export const channelSettingsSchema = z.object({
+  channel: z.enum(['whatsapp', 'facebook', 'instagram']),
+  paused: z.boolean().optional(),
+  iceBreakers: z.array(question).max(4, 'Máximo 4 preguntas.').optional(),
+  greeting: z.string().trim().max(160).optional(),
+});
+
+/** PUT /api/connections/settings — ajustes de un canal (dueño). */
+export const updateChannelSettings = asyncHandler(async (req, res) => {
+  const { channel, paused, iceBreakers, greeting } = req.body;
+  const business = await Business.findById(req.businessId).select('+facebookPageToken +instagramPageToken');
+  if (!business) throw new ApiError(404, 'Negocio no encontrado');
+  if (!business.channelSettings) business.channelSettings = {};
+  const cs = business.channelSettings[channel] || {};
+
+  const wasPaused = Boolean(cs.paused);
+  if (paused !== undefined) cs.paused = paused;
+  const profileChanged =
+    channel !== 'whatsapp' &&
+    ((iceBreakers !== undefined && JSON.stringify(iceBreakers) !== JSON.stringify(cs.iceBreakers || [])) ||
+      (channel === 'facebook' && greeting !== undefined && greeting !== (cs.greeting || '')));
+  if (channel !== 'whatsapp' && iceBreakers !== undefined) cs.iceBreakers = iceBreakers;
+  if (channel === 'facebook' && greeting !== undefined) cs.greeting = greeting;
+  business.channelSettings[channel] = cs;
+  business.markModified('channelSettings');
+  await business.save();
+
+  // Preguntas iniciales / saludo: se aplican en Meta si el canal está conectado.
+  let metaWarning = null;
+  if (profileChanged) {
+    const r = await pushProfile(business, channel);
+    if (!r.ok) {
+      metaWarning = `Se guardó, pero Meta no aceptó el cambio${r.error ? ` (${r.error})` : ''}. Vuelve a intentar en un momento.`;
+    }
+  }
+
+  if (paused !== undefined && paused !== wasPaused) {
+    const label = { whatsapp: 'WhatsApp', facebook: 'Messenger', instagram: 'Instagram' }[channel];
+    void logAudit({
+      businessId: req.businessId,
+      userId: req.userId,
+      action: 'channel.pause',
+      summary: paused ? `Pausó el bot en ${label}.` : `Reactivó el bot en ${label}.`,
+    });
+  }
+  res.json({ success: true, data: { settings: channelSettingsView(business), metaWarning } });
 });
 
 /* ─── Perfil de WhatsApp Business (lo que el cliente ve en el chat) ─────────── */

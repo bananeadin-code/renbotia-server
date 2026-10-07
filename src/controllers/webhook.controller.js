@@ -245,7 +245,13 @@ async function processInstagramInbound(payload) {
 
 async function handleDmMessage({ business, event, channel, pageToken }) {
   const ch = DM_CHANNELS[channel];
-  const msg = event.message;
+  // Al tocar una pregunta inicial (ice breaker) llega un postback con su texto:
+  // se atiende como si el cliente la hubiera escrito.
+  const msg =
+    event.message ||
+    (event.postback?.title
+      ? { mid: event.postback.mid || `pb_${event.sender?.id}_${event.timestamp}`, text: event.postback.title }
+      : null);
   // Ignorar ecos (lo que envía la propia cuenta), mensajes borrados y eventos sin
   // mensaje (entregas, lecturas, reacciones, postbacks). Dedupe por mid.
   if (!msg || msg.is_echo || msg.is_deleted || msg.is_unsupported) return;

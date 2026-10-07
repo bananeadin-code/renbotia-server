@@ -80,6 +80,22 @@ const businessSchema = new mongoose.Schema(
     instagramPageId: { type: String, trim: true, default: '' },
     instagramPageToken: { type: String, default: '', select: false },
     instagramConnectedAt: { type: Date, default: null },
+    // ── Ajustes por canal ──
+    // paused: el canal sigue conectado y los mensajes llegan a la bandeja, pero
+    // el bot no contesta. iceBreakers: preguntas iniciales (Messenger/Instagram),
+    // greeting: saludo de la pantalla de bienvenida de Messenger.
+    channelSettings: {
+      whatsapp: { paused: { type: Boolean, default: false } },
+      facebook: {
+        paused: { type: Boolean, default: false },
+        iceBreakers: { type: [String], default: [] },
+        greeting: { type: String, default: '', maxlength: 160 },
+      },
+      instagram: {
+        paused: { type: Boolean, default: false },
+        iceBreakers: { type: [String], default: [] },
+      },
+    },
     // ── Widget web (chat incrustable en el sitio del negocio; Pro/Elite) ──
     // `key` es PÚBLICA (va en el snippet): identifica el negocio, no da acceso al
     // panel. Se genera al activarlo y se puede regenerar para invalidar copias.
@@ -89,6 +105,17 @@ const businessSchema = new mongoose.Schema(
       color: { type: String, default: '#4f46e5' },
       greeting: { type: String, default: '', maxlength: 200 },
       position: { type: String, enum: ['right', 'left'], default: 'right' },
+      // Preguntas sugeridas (botones) dentro del chat.
+      suggestions: { type: [String], default: [] },
+      // Abrir solo tras N segundos (0 = nunca), una vez por visita.
+      autoOpenSeconds: { type: Number, default: 0, min: 0, max: 120 },
+      // Pedir nombre y correo/WhatsApp antes de chatear (captura de prospectos).
+      requireContact: { type: Boolean, default: false },
+      // Dominios donde puede usarse (vacío = cualquiera).
+      allowedDomains: { type: [String], default: [] },
+      hideOnMobile: { type: Boolean, default: false },
+      // Texto junto al botón flotante (vacío = solo ícono).
+      buttonText: { type: String, default: '', maxlength: 30 },
     },
     status: {
       type: String,

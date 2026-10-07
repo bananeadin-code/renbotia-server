@@ -255,3 +255,55 @@ export async function subscribePageToApp(pageId, pageToken) {
     return { ok: false, error: err.message };
   }
 }
+
+/**
+ * Perfil de Messenger / Instagram (messenger_profile): preguntas iniciales
+ * (ice breakers) y, solo en Messenger, el saludo de la pantalla de bienvenida.
+ * Lo que va vacío se BORRA del perfil. Al tocar una pregunta inicial llega un
+ * postback con su texto, que el webhook trata como mensaje del cliente.
+ * @param {{ pageToken:string, platform:'messenger'|'instagram', iceBreakers?:string[], greeting?:string }} p
+ * @returns {Promise<{ ok:boolean, error?:string }>}
+ */
+export async function syncMessengerProfile({ pageToken, platform = 'messenger', iceBreakers = [], greeting = '' }) {
+  if (!pageToken) return { ok: false, error: 'missing_token' };
+  const qs = `access_token=${encodeURIComponent(pageToken)}${platform === 'instagram' ? '&platform=instagram' : ''}`;
+  const url = `${GRAPH()}/me/messenger_profile?${qs}`;
+  const questions = iceBreakers.map((q) => q.trim()).filter(Boolean).slice(0, 4);
+  const set = {};
+  const remove = [];
+  if (questions.length) {
+    set.ice_breakers = [
+      {
+        locale: 'default',
+        call_to_actions: questions.map((q, i) => ({ question: q.slice(0, 80), payload: `ICEBREAKER_${i + 1}` })),
+      },
+    ];
+  } else remove.push('ice_breakers');
+  if (platform === 'messenger') {
+    if (greeting.trim()) set.greeting = [{ locale: 'default', text: greeting.trim().slice(0, 160) }];
+    else remove.push('greeting');
+  }
+
+  const call = async (method, body) => {
+    const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      logger.warn(`${platform}: messenger_profile ${method} ${res.status}: ${JSON.stringify(data).slice(0, 300)}`);
+      return { ok: false, error: data?.error?.message || `HTTP ${res.status}` };
+    }
+    return { ok: true };
+  };
+  try {
+    if (Object.keys(set).length) {
+      const r = await call('POST', set);
+      if (!r.ok) return r;
+    }
+    if (remove.length) {
+      const r = await call('DELETE', { fields: remove });
+      if (!r.ok) return r;
+    }
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}

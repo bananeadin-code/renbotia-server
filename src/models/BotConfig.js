@@ -65,6 +65,27 @@ const botConfigSchema = new mongoose.Schema(
       mode: { type: String, enum: ['ai', 'custom'], default: 'ai' },
       message: { type: String, default: '', maxlength: 500 },
     },
+    // Horario de atención. botMode 'always' = el bot contesta siempre (y si está
+    // cerrado lo comunica con closedMessage); 'closed_only' = el bot solo
+    // contesta fuera del horario y dentro atiende una persona desde la bandeja.
+    schedule: {
+      enabled: { type: Boolean, default: false },
+      timezone: { type: String, default: 'America/Mexico_City' },
+      botMode: { type: String, enum: ['always', 'closed_only'], default: 'always' },
+      days: {
+        type: [
+          {
+            _id: false,
+            day: { type: Number, min: 0, max: 6 },
+            enabled: { type: Boolean, default: true },
+            open: { type: String, default: '09:00' },
+            close: { type: String, default: '18:00' },
+          },
+        ],
+        default: undefined,
+      },
+      closedMessage: { type: String, default: '', maxlength: 300 },
+    },
     // Elite: documentos de contexto subidos por el negocio (PDF, texto). Guardamos
     // el TEXTO ya extraído (no el archivo) como material de referencia del bot.
     documents: {

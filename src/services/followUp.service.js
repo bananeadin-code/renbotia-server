@@ -13,6 +13,7 @@ import { sanitizeBotConfigForPlan } from '../utils/planGating.js';
 import { sendText } from './whatsapp.service.js';
 import { sendMessengerText } from './messenger.service.js';
 import { sendInstagramText } from './instagram.service.js';
+import { botAvailability } from '../utils/botAvailability.js';
 
 /**
  * Seguimiento automático (Pro/Elite).
@@ -118,6 +119,8 @@ async function runForBusiness(config) {
   for (const chat of candidates) {
     if (sent >= MAX_PER_BUSINESS_PER_RUN) break;
     if (!isFollowUpDue(chat, delayMs, now)) continue;
+    // Canal en pausa u horario en que atiende el equipo: no se escribe solo.
+    if (!botAvailability({ business, schedule: config.schedule, channel: chat.channel, source: chat.channel }).reply) continue;
     if (chat.channel === 'whatsapp' && !business.whatsappPhoneNumberId) continue;
     if (chat.channel === 'facebook' && !business.facebookPageToken) continue;
     if (chat.channel === 'instagram' && !business.instagramPageToken) continue;

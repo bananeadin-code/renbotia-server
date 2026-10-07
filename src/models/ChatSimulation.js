@@ -51,6 +51,8 @@ const chatSimulationSchema = new mongoose.Schema(
     // WhatsApp, PSID/IGSID en Instagram/Messenger. Lo usa el adaptador de cada canal.
     customerId: { type: String, default: '' },
     customerName: { type: String, default: '' },
+    // Correo o WhatsApp que dejó el visitante del widget web (captura de prospectos).
+    customerContact: { type: String, default: '' },
     messages: { type: [messageSchema], default: [] },
     // Relevo humano: 'bot' = el bot responde automáticamente; 'manual' = una
     // persona tomó el control y el bot no responde en esta conversación.

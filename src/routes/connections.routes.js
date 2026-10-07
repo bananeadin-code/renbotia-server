@@ -43,6 +43,14 @@ router.post(
 );
 router.post('/messenger/disconnect', requireBusinessRole('owner'), connections.disconnectMessenger);
 
+// Ajustes por canal (pausa, preguntas iniciales, saludo): dueño.
+router.put(
+  '/settings',
+  requireBusinessRole('owner'),
+  validate(connections.channelSettingsSchema),
+  connections.updateChannelSettings
+);
+
 // Instagram DMs (cuenta profesional ligada a una Página): acción del DUEÑO.
 router.post(
   '/instagram',

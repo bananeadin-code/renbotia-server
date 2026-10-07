@@ -39,6 +39,7 @@ export const listConversations = asyncHandler(async (req, res) => {
       messageCount: c.messages.length,
       channel: c.channel || 'simulator',
       customerName: c.customerName || '',
+      customerContact: c.customerContact || '',
       tags: c.tags || [],
       // Tipo de registro de trabajo captado (cita/pedido/prospecto…) o '' si ninguno.
       capturedRecordType: c.capturedRecordType || '',
@@ -282,6 +283,7 @@ export const exportConversations = asyncHandler(async (req, res) => {
       canal: c.channel || 'simulator',
       cliente: c.customerName || c.title || '',
       telefono: c.customerPhone || '',
+      contacto: c.customerContact || '',
       mensajes: c.messages.length,
       modo: c.handoffMode || 'bot',
       atencion: c.needsAttention ? 'sí' : 'no',
@@ -294,6 +296,7 @@ export const exportConversations = asyncHandler(async (req, res) => {
     { label: 'Canal', get: (r) => r.canal },
     { label: 'Cliente', get: (r) => r.cliente },
     { label: 'Teléfono', get: (r) => r.telefono },
+    { label: 'Contacto (sitio web)', get: (r) => r.contacto },
     { label: 'Mensajes', get: (r) => r.mensajes },
     { label: 'Modo', get: (r) => r.modo },
     { label: 'Requiere atención', get: (r) => r.atencion },

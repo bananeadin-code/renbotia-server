@@ -6,6 +6,9 @@ import { ApiError } from '../utils/ApiError.js';
 import { sanitizeBotConfigForPlan, getPlanLimits } from '../utils/planGating.js';
 import { validateTrainingConfig } from '../services/validation.service.js';
 import { logAudit } from '../services/audit.service.js';
+import { SCHEDULE_TIMEZONES } from '../utils/botAvailability.js';
+
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 const faqSchema = z.object({
   question: z.string().min(2, 'La pregunta es muy corta'),
@@ -42,6 +45,32 @@ export const updateBotConfigSchema = z.object({
     .optional(),
   extraContext: z.string().max(6000).optional(),
   quickReplies: z.array(z.string().max(300)).max(12).optional(),
+  schedule: z
+    .object({
+      enabled: z.boolean(),
+      timezone: z.enum(SCHEDULE_TIMEZONES),
+      botMode: z.enum(['always', 'closed_only']),
+      days: z
+        .array(
+          z.object({
+            day: z.number().int().min(0).max(6),
+            enabled: z.boolean(),
+            open: z.string().regex(HHMM, 'Hora no válida'),
+            close: z.string().regex(HHMM, 'Hora no válida'),
+          })
+        )
+        .max(7),
+      closedMessage: z.string().max(300).optional().default(''),
+    })
+    .refine((sc) => sc.days.every((d) => !d.enabled || d.open !== d.close), {
+      message: 'La hora de apertura y de cierre no pueden ser iguales.',
+      path: ['days'],
+    })
+    .refine((sc) => !sc.enabled || sc.days.some((d) => d.enabled), {
+      message: 'Marca al menos un día de atención.',
+      path: ['days'],
+    })
+    .optional(),
   followUp: z
     .object({
       enabled: z.boolean(),
