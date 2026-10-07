@@ -101,3 +101,35 @@ export const demoProfileLimiter = rateLimit({
   },
 });
 
+
+/**
+ * dailyBudget: tope GLOBAL por día (todas las IPs juntas) para endpoints públicos
+ * que gastan IA a costo de RenBotIA. Los límites por IP no bastan: detrás del
+ * proxy de Vercel la IP puede rotar, y un abuso distribuido los esquiva. En
+ * memoria (una sola instancia); se reinicia a medianoche UTC o al reiniciar.
+ */
+export function dailyBudget(max, message) {
+  let day = '';
+  let used = 0;
+  return (req, res, next) => {
+    const today = new Date().toISOString().slice(0, 10);
+    if (today !== day) {
+      day = today;
+      used = 0;
+    }
+    if (used >= max) {
+      return res.status(429).json({ success: false, message, code: 'DAILY_BUDGET' });
+    }
+    used += 1;
+    return next();
+  };
+}
+
+export const demoDailyBudget = dailyBudget(
+  Number(process.env.DEMO_DAILY_MAX) || 2000,
+  'La demo está muy solicitada hoy. Crea tu cuenta gratis para probar tu propio bot.'
+);
+export const demoProfileDailyBudget = dailyBudget(
+  Number(process.env.DEMO_PROFILE_DAILY_MAX) || 300,
+  'La demo está muy solicitada hoy. Crea tu cuenta gratis para probar tu propio bot.'
+);

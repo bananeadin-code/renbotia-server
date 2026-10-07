@@ -10,6 +10,7 @@ import { BillingProfile } from '../models/BillingProfile.js';
 import { BotConfig } from '../models/BotConfig.js';
 import { ChatSimulation } from '../models/ChatSimulation.js';
 import { Invitation } from '../models/Invitation.js';
+import { LearningSuggestion } from '../models/LearningSuggestion.js';
 import { ManagedRecord } from '../models/ManagedRecord.js';
 import { ManagementConfig } from '../models/ManagementConfig.js';
 import { Payment } from '../models/Payment.js';
@@ -37,6 +38,7 @@ const BUSINESS_OWNED_MODELS = [
   BotConfig,
   ChatSimulation, // historial de conversaciones (bot y manual)
   Invitation,
+  LearningSuggestion, // "Aprende de ti" (contiene preguntas de clientes)
   ManagedRecord, // citas, pedidos, prospectos
   ManagementConfig,
   Membership, // membresías de ese negocio (incluye a otros colaboradores)
