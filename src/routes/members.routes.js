@@ -22,5 +22,12 @@ router.post(
 );
 router.delete('/invite/:id', requireBusiness, requireBusinessRole('owner'), members.cancelInvitation);
 router.delete('/:userId', requireBusiness, requireBusinessRole('owner'), members.removeMember);
+router.patch(
+  '/:userId/permissions',
+  requireBusiness,
+  requireBusinessRole('owner'),
+  validate(members.permissionsSchema),
+  members.updatePermissions
+);
 
 export default router;

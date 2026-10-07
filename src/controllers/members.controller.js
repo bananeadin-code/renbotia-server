@@ -10,6 +10,8 @@ import { Subscription } from '../models/Subscription.js';
 import { sendEmail } from '../services/email.service.js';
 import { logAudit } from '../services/audit.service.js';
 import { env, isProd } from '../config/env.js';
+import { UsageLog } from '../models/UsageLog.js';
+import { PERMISSION_KEYS, DEFAULT_MEMBER_PERMISSIONS } from '../config/constants.js';
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 días
 const acceptLink = (token) => `${env.publicUrl.replace(/\/$/, '')}/aceptar-invitacion?token=${token}`;
@@ -25,6 +27,14 @@ export const listMembers = asyncHandler(async (req, res) => {
     Invitation.find({ business: req.businessId }).sort({ createdAt: 1 }).lean(),
   ]);
 
+  // Gasto del simulador por persona este mes (control del equipo).
+  const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  const simAgg = await UsageLog.aggregate([
+    { $match: { business: req.businessId, source: 'simulator', user: { $ne: null }, date: { $gte: startOfMonth } } },
+    { $group: { _id: '$user', tokens: { $sum: '$totalTokens' }, messages: { $sum: 1 } } },
+  ]);
+  const simBy = Object.fromEntries(simAgg.map((g) => [String(g._id), g]));
+
   const members = memberships
     .filter((m) => m.user)
     .map((m) => ({
@@ -33,6 +43,14 @@ export const listMembers = asyncHandler(async (req, res) => {
       email: m.user.email,
       role: m.role,
       isMe: String(m.user._id) === String(req.userId),
+      permissions:
+        m.role === 'owner'
+          ? Object.fromEntries(PERMISSION_KEYS.map((k) => [k, true]))
+          : { ...DEFAULT_MEMBER_PERMISSIONS, ...(m.permissions || {}) },
+      simulator: {
+        tokens: simBy[String(m.user._id)]?.tokens || 0,
+        messages: simBy[String(m.user._id)]?.messages || 0,
+      },
     }));
 
   res.json({
@@ -206,3 +224,34 @@ export const removeMember = asyncHandler(async (req, res) => {
 function escapeHtml(str = '') {
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
+
+export const permissionsSchema = z.object({
+  simulator: z.boolean().optional(),
+  training: z.boolean().optional(),
+  profile: z.boolean().optional(),
+  connections: z.boolean().optional(),
+});
+
+/** PATCH /api/members/:userId/permissions — el dueño da o quita permisos a un colaborador. */
+export const updatePermissions = asyncHandler(async (req, res) => {
+  const m = await Membership.findOne({ business: req.businessId, user: req.params.userId });
+  if (!m) throw ApiError.notFound('Ese miembro no existe.');
+  if (m.role === 'owner') throw ApiError.badRequest('El dueño siempre tiene todos los permisos.');
+  const before = { ...DEFAULT_MEMBER_PERMISSIONS, ...(m.toObject().permissions || {}) };
+  for (const k of PERMISSION_KEYS) if (req.body[k] !== undefined) m.set(`permissions.${k}`, req.body[k]);
+  await m.save();
+  const after = { ...DEFAULT_MEMBER_PERMISSIONS, ...(m.toObject().permissions || {}) };
+  const LABEL = { simulator: 'simulador', training: 'entrenar el bot', profile: 'datos del negocio', connections: 'conexiones' };
+  const changes = PERMISSION_KEYS.filter((k) => before[k] !== after[k]).map((k) => `${after[k] ? 'dio' : 'quitó'} ${LABEL[k]}`);
+  if (changes.length) {
+    const user = await User.findById(req.params.userId).select('name email').lean();
+    void logAudit({
+      businessId: req.businessId,
+      userId: req.userId,
+      action: 'member.permissions',
+      summary: `Permisos de ${user?.name || user?.email || 'un colaborador'}: ${changes.join(', ')}.`,
+    });
+  }
+  res.json({ success: true, data: { permissions: after } });
+});
+

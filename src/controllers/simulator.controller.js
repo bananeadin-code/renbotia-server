@@ -18,6 +18,7 @@ export const sendMessage = asyncHandler(async (req, res) => {
     business: req.business,
     message: req.body.message,
     chatId: req.body.chatId,
+    userId: req.userId, // para saber quién del equipo usa el simulador
   });
 
   res.json({ success: true, data: result });

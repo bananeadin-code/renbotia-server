@@ -8,7 +8,7 @@ import { ApiError } from '../utils/ApiError.js';
  * llega en la Fase 3.
  */
 export const listChats = asyncHandler(async (req, res) => {
-  const chats = await ChatSimulation.find({ business: req.businessId })
+  const chats = await ChatSimulation.find({ business: req.businessId, channel: 'simulator' })
     .select('title createdAt updatedAt messages')
     .sort({ updatedAt: -1 })
     .lean();

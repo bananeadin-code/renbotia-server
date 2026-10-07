@@ -21,6 +21,10 @@ const usageLogSchema = new mongoose.Schema(
     // Modelo de Claude que atendió la petición (para estimar el costo real por
     // modelo en admin, ya que cada plan corre en uno distinto: Haiku/Sonnet).
     model: { type: String, default: '' },
+    // Quién lo generó (pruebas del simulador) y en qué conversación: permite ver
+    // el gasto por persona del equipo y por conversación.
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    chat: { type: mongoose.Schema.Types.ObjectId, ref: 'ChatSimulation', default: null },
     // Canal que originó el consumo. instagram/facebook quedan listos para Fase 2.
     source: {
       type: String,

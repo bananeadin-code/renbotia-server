@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiError } from '../utils/ApiError.js';
 import { ChatSimulation } from '../models/ChatSimulation.js';
+import { UsageLog } from '../models/UsageLog.js';
+import '../models/User.js'; // populate de startedBy
 import { Business } from '../models/Business.js';
 import { logAudit } from '../services/audit.service.js';
 import { sendText, sendTemplate, listTemplates } from '../services/whatsapp.service.js';
@@ -19,12 +21,34 @@ import { CONVERSATION_RETENTION_DAYS } from '../config/constants.js';
  * mismo modelo recibirá conversaciones reales cuando se conecte WhatsApp.
  */
 
-/** GET /api/conversations — lista de conversaciones con resumen. */
+/**
+ * GET /api/conversations?scope=real|simulator — lista con resumen.
+ * real (por defecto): clientes de los canales conectados. simulator: las pruebas
+ * del equipo en el Simulador, aparte, con quién las hizo y cuántos tokens gastó
+ * (sin modo manual ni etiquetas: no son clientes).
+ */
 export const listConversations = asyncHandler(async (req, res) => {
-  const chats = await ChatSimulation.find({ business: req.businessId })
-    .sort({ updatedAt: -1 })
-    .limit(100)
-    .lean();
+  const simulator = req.query.scope === 'simulator';
+  const filter = { business: req.businessId, channel: simulator ? 'simulator' : { $ne: 'simulator' } };
+  const [chats, simulatorCount] = await Promise.all([
+    ChatSimulation.find(filter)
+      .sort({ updatedAt: -1 })
+      .limit(100)
+      .populate(simulator ? { path: 'startedBy', select: 'name email' } : [])
+      .lean(),
+    ChatSimulation.countDocuments({ business: req.businessId, channel: 'simulator' }),
+  ]);
+
+  // Tokens por prueba del simulador (de UsageLog; si es una prueba anterior al
+  // registro por conversación, se suman los tokens guardados en sus mensajes).
+  let tokensByChat = {};
+  if (simulator && chats.length) {
+    const agg = await UsageLog.aggregate([
+      { $match: { business: req.businessId, chat: { $in: chats.map((c) => c._id) } } },
+      { $group: { _id: '$chat', tokens: { $sum: '$totalTokens' } } },
+    ]);
+    tokensByChat = Object.fromEntries(agg.map((a) => [String(a._id), a.tokens]));
+  }
 
   const conversations = chats.map((c) => {
     const last = c.messages[c.messages.length - 1];
@@ -49,6 +73,13 @@ export const listConversations = asyncHandler(async (req, res) => {
       hotLeadReason: c.hotLeadReason || '',
       // Ventana de 24h (WhatsApp, Messenger e Instagram; null en simulador y web).
       whatsappWindow: computeServiceWindow(c),
+      ...(simulator
+        ? {
+            startedBy: c.startedBy ? { name: c.startedBy.name || c.startedBy.email, email: c.startedBy.email } : null,
+            tokens:
+              tokensByChat[String(c._id)] ?? (c.messages || []).reduce((n, m) => n + (m.tokens || 0), 0),
+          }
+        : {}),
     };
   });
 
@@ -58,6 +89,8 @@ export const listConversations = asyncHandler(async (req, res) => {
       conversations,
       needAttention: conversations.filter((c) => c.needsAttention).length,
       hotLeads: conversations.filter((c) => c.hotLead).length,
+      scope: simulator ? 'simulator' : 'real',
+      simulatorCount,
       // Días sin actividad tras los que una conversación se elimina sola.
       retentionDays: CONVERSATION_RETENTION_DAYS,
     },
@@ -86,6 +119,14 @@ export const updateConversationSchema = z.object({
 export const updateConversation = asyncHandler(async (req, res) => {
   const chat = await ChatSimulation.findOne({ _id: req.params.id, business: req.businessId });
   if (!chat) throw ApiError.notFound('Conversación no encontrada');
+  if (
+    chat.channel === 'simulator' &&
+    (req.body.handoffMode !== undefined || req.body.tags !== undefined || req.body.hotLead !== undefined)
+  ) {
+    throw new ApiError(400, 'Las pruebas del simulador no tienen modo manual, etiquetas ni leads.', {
+      code: 'SIMULATOR_READONLY',
+    });
+  }
 
   const prevMode = chat.handoffMode;
   if (req.body.handoffMode !== undefined) chat.handoffMode = req.body.handoffMode;
@@ -133,6 +174,11 @@ export const replySchema = z.object({ message: z.string().min(1, 'Escribe un men
 export const replyAsAgent = asyncHandler(async (req, res) => {
   const chat = await ChatSimulation.findOne({ _id: req.params.id, business: req.businessId });
   if (!chat) throw ApiError.notFound('Conversación no encontrada');
+  if (chat.channel === 'simulator') {
+    throw new ApiError(400, 'Las pruebas del simulador no se responden como persona. Usa el Simulador.', {
+      code: 'SIMULATOR_READONLY',
+    });
+  }
 
   const text = req.body.message.trim();
 

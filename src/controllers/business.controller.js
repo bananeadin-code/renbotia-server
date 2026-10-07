@@ -39,7 +39,7 @@ export const updateBusinessSchema = z.object({
 export const getMyBusiness = asyncHandler(async (req, res) => {
   res.json({
     success: true,
-    data: { business: req.business, role: req.membershipRole, smsEnabled: env.sms.enabled },
+    data: { business: req.business, role: req.membershipRole, permissions: req.permissions, smsEnabled: env.sms.enabled },
   });
 });
 

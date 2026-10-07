@@ -57,6 +57,14 @@ export const PLANS = [
 ];
 
 /**
+ * Permisos de los colaboradores (el dueño siempre los tiene todos). Por defecto
+ * un colaborador puede probar y entrenar el bot, pero no cambiar los datos del
+ * negocio ni las conexiones; el dueño los ajusta en Equipo.
+ */
+export const PERMISSION_KEYS = ['simulator', 'training', 'profile', 'connections'];
+export const DEFAULT_MEMBER_PERMISSIONS = { simulator: true, training: true, profile: false, connections: false };
+
+/**
  * Retención de conversaciones: las que llevan este número de días SIN actividad
  * se eliminan solas (índice TTL de MongoDB sobre updatedAt) para liberar espacio.
  * Cualquier mensaje nuevo reinicia el conteo. Se avisa en la bandeja.

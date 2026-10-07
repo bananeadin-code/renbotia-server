@@ -5,6 +5,8 @@ import { ChatSimulation } from '../models/ChatSimulation.js';
 import { ManagedRecord } from '../models/ManagedRecord.js';
 import { applyLazyReset, computeBalance } from '../services/token.service.js';
 import { computeImpact } from '../services/impact.service.js';
+import { LearningSuggestion } from '../models/LearningSuggestion.js';
+import { User } from '../models/User.js';
 
 /**
  * Resumen de consumo para el dashboard:
@@ -66,6 +68,9 @@ export const getImpactSummary = asyncHandler(async (req, res) => {
  * estimación del tiempo de primera respuesta del bot. Datos duros del propio
  * negocio (aislados por tenant); las estimaciones se marcan como tales en la UI.
  */
+// Canales reales (todo menos el Simulador, que se mide aparte).
+const REAL = { $ne: 'simulator' };
+
 export const getAnalytics = asyncHandler(async (req, res) => {
   const businessId = req.businessId;
   const now = new Date();
@@ -78,7 +83,7 @@ export const getAnalytics = asyncHandler(async (req, res) => {
     await Promise.all([
       // Conversaciones NUEVAS por mes (por fecha de creación).
       ChatSimulation.aggregate([
-        { $match: { business: businessId, createdAt: { $gte: sixMonthsAgo } } },
+        { $match: { business: businessId, channel: REAL, createdAt: { $gte: sixMonthsAgo } } },
         { $group: { _id: { $dateToString: { format: '%Y-%m', date: '$createdAt' } }, n: { $sum: 1 } } },
       ]),
       // Trabajo captado por mes.
@@ -93,21 +98,21 @@ export const getAnalytics = asyncHandler(async (req, res) => {
       ]),
       // Reparto de conversaciones por canal (histórico).
       ChatSimulation.aggregate([
-        { $match: { business: businessId } },
+        { $match: { business: businessId, channel: REAL } },
         { $group: { _id: '$channel', n: { $sum: 1 } } },
       ]),
       // Mensajes de ESTE mes por rol/origen (para respuestas del bot vs. persona).
       ChatSimulation.aggregate([
-        { $match: { business: businessId } },
+        { $match: { business: businessId, channel: REAL } },
         { $unwind: '$messages' },
         { $match: { 'messages.timestamp': { $gte: startOfMonth } } },
         { $group: { _id: { role: '$messages.role', via: '$messages.via' }, n: { $sum: 1 } } },
       ]),
       // Leads calientes abiertos (oportunidades pendientes de seguimiento).
-      ChatSimulation.countDocuments({ business: businessId, hotLead: true }),
+      ChatSimulation.countDocuments({ business: businessId, channel: REAL, hotLead: true }),
       // Etiquetas más usadas por el agente.
       ChatSimulation.aggregate([
-        { $match: { business: businessId, tags: { $ne: [] } } },
+        { $match: { business: businessId, channel: REAL, tags: { $ne: [] } } },
         { $unwind: '$tags' },
         { $group: { _id: '$tags', n: { $sum: 1 } } },
         { $sort: { n: -1 } },
@@ -115,12 +120,40 @@ export const getAnalytics = asyncHandler(async (req, res) => {
       ]),
       ManagedRecord.countDocuments({ business: businessId, createdAt: { $gte: startOfMonth } }),
       // Muestra reciente para estimar el tiempo de primera respuesta del bot.
-      ChatSimulation.find({ business: businessId, createdAt: { $gte: sixtyDaysAgo } })
+      ChatSimulation.find({ business: businessId, channel: REAL, createdAt: { $gte: sixtyDaysAgo } })
         .select('messages')
         .sort({ createdAt: -1 })
         .limit(300)
         .lean(),
     ]);
+
+  const [impact, followAgg, taught, pendingLearning, webLeads, simByUser, simChats] = await Promise.all([
+    computeImpact(businessId, startOfMonth, now),
+    ChatSimulation.aggregate([
+      { $match: { business: businessId, channel: REAL } },
+      { $unwind: '$messages' },
+      { $match: { 'messages.followUp': true, 'messages.timestamp': { $gte: startOfMonth } } },
+      { $count: 'n' },
+    ]),
+    LearningSuggestion.countDocuments({ business: businessId, status: 'accepted', updatedAt: { $gte: startOfMonth } }),
+    LearningSuggestion.countDocuments({ business: businessId, status: 'pending' }),
+    ChatSimulation.countDocuments({
+      business: businessId,
+      channel: 'web',
+      customerContact: { $nin: ['', null] },
+      createdAt: { $gte: startOfMonth },
+    }),
+    UsageLog.aggregate([
+      { $match: { business: businessId, source: 'simulator', date: { $gte: startOfMonth } } },
+      { $group: { _id: '$user', tokens: { $sum: '$totalTokens' }, messages: { $sum: 1 } } },
+      { $sort: { tokens: -1 } },
+    ]),
+    ChatSimulation.countDocuments({ business: businessId, channel: 'simulator', createdAt: { $gte: startOfMonth } }),
+  ]);
+  const simUsers = await User.find({ _id: { $in: simByUser.map((s) => s._id).filter(Boolean) } })
+    .select('name email')
+    .lean();
+  const simName = Object.fromEntries(simUsers.map((u) => [String(u._id), u.name || u.email]));
 
   // Serie mensual de 6 meses (incluye meses sin actividad, en cero).
   const MONTH_LABELS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
@@ -189,6 +222,22 @@ export const getAnalytics = asyncHandler(async (req, res) => {
         incomingMessages,
         hotLeadsOpen,
         avgResponseMins,
+        followUpsSent: followAgg[0]?.n || 0,
+        webLeads,
+      },
+      // "Lo que generó tu bot" del mes (mismos datos que Inicio).
+      impact,
+      // Aprende de ti: lo que el equipo le enseñó al bot este mes y lo pendiente.
+      learning: { taughtThisMonth: taught, pending: pendingLearning },
+      // Uso del Simulador por persona del equipo (control de tokens).
+      simulator: {
+        conversationsThisMonth: simChats,
+        tokensThisMonth: simByUser.reduce((n, s) => n + s.tokens, 0),
+        byUser: simByUser.map((s) => ({
+          name: s._id ? simName[String(s._id)] || 'Miembro eliminado' : 'Pruebas anteriores',
+          tokens: s.tokens,
+          messages: s.messages,
+        })),
       },
     },
   });

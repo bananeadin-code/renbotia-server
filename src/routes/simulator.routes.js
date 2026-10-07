@@ -4,12 +4,13 @@ import { requireBusiness } from '../middleware/tenant.middleware.js';
 import { validate } from '../middleware/validate.middleware.js';
 import { simulatorLimiter } from '../middleware/rateLimit.middleware.js';
 import { sendMessage, sendMessageSchema } from '../controllers/simulator.controller.js';
+import { requirePermission } from '../middleware/tenant.middleware.js';
 
 const router = Router();
 
 router.use(requireAuth, requireBusiness);
 
 // simulatorLimiter protege el endpoint que llama a Claude (coste real de API).
-router.post('/message', simulatorLimiter, validate(sendMessageSchema), sendMessage);
+router.post('/message', requirePermission('simulator'), simulatorLimiter, validate(sendMessageSchema), sendMessage);
 
 export default router;

@@ -3,7 +3,7 @@ import { Membership } from '../models/Membership.js';
 import { ApiError } from '../utils/ApiError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { provisionBusiness } from '../services/business.service.js';
-import { ROLES } from '../config/constants.js';
+import { ROLES, PERMISSION_KEYS, DEFAULT_MEMBER_PERMISSIONS } from '../config/constants.js';
 
 /**
  * Resuelve el negocio del usuario y su ROL en él, y lo adjunta a la request.
@@ -79,8 +79,30 @@ export const requireBusiness = asyncHandler(async (req, res, next) => {
   req.business = business;
   req.businessId = business._id;
   req.membershipRole = role;
+  // Permisos efectivos: el dueño todos; un colaborador los de su membresía.
+  if (role === 'owner') {
+    req.permissions = Object.fromEntries(PERMISSION_KEYS.map((k) => [k, true]));
+  } else {
+    const m = await Membership.findOne({ business: business._id, user: req.userId }).select('permissions').lean();
+    req.permissions = { ...DEFAULT_MEMBER_PERMISSIONS, ...(m?.permissions || {}) };
+  }
   next();
 });
+
+const PERMISSION_MESSAGES = {
+  simulator: 'No tienes permiso para usar el simulador. Pídeselo al dueño del negocio.',
+  training: 'No tienes permiso para entrenar el bot. Pídeselo al dueño del negocio.',
+  profile: 'No tienes permiso para cambiar los datos del negocio. Pídeselo al dueño.',
+  connections: 'No tienes permiso para cambiar las conexiones. Pídeselo al dueño del negocio.',
+};
+
+/** Exige un permiso de colaborador (el dueño siempre pasa). Va DESPUÉS de requireBusiness. */
+export function requirePermission(key) {
+  return (req, res, next) => {
+    if (req.membershipRole === 'owner' || req.permissions?.[key]) return next();
+    return next(new ApiError(403, PERMISSION_MESSAGES[key] || 'No tienes permiso para esta acción.', { code: 'PERMISSION_REQUIRED', permission: key }));
+  };
+}
 
 /**
  * Exige uno de los roles indicados en el negocio actual. Va DESPUÉS de

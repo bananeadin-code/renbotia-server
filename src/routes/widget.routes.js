@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import cors from 'cors';
 import { requireAuth } from '../middleware/auth.middleware.js';
-import { requireBusiness, requireBusinessRole } from '../middleware/tenant.middleware.js';
+import { requireBusiness, requirePermission } from '../middleware/tenant.middleware.js';
 import { validate } from '../middleware/validate.middleware.js';
 import { widgetLimiter } from '../middleware/rateLimit.middleware.js';
 import * as widget from '../controllers/widget.controller.js';
@@ -24,7 +24,7 @@ router.put(
   '/',
   requireAuth,
   requireBusiness,
-  requireBusinessRole('owner'),
+  requirePermission('connections'),
   validate(widget.updateWidgetSchema),
   widget.updateWidget
 );

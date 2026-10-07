@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { requireAuth } from '../middleware/auth.middleware.js';
-import { requireBusiness, requireBusinessRole } from '../middleware/tenant.middleware.js';
+import { requireBusiness, requirePermission } from '../middleware/tenant.middleware.js';
 import { validate } from '../middleware/validate.middleware.js';
 import * as connections from '../controllers/connections.controller.js';
 
@@ -10,20 +10,20 @@ router.use(requireAuth, requireBusiness);
 // Estado y config lo puede ver cualquier miembro del negocio.
 router.get('/', connections.getConnections);
 
-// Conectar/desconectar WhatsApp es acción del DUEÑO (identidad del negocio).
+// Conectar/desconectar y ajustar canales: dueño o colaborador con permiso de conexiones.
 router.post(
   '/whatsapp',
-  requireBusinessRole('owner'),
+  requirePermission('connections'),
   validate(connections.connectSchema),
   connections.connectWhatsApp
 );
-router.post('/whatsapp/disconnect', requireBusinessRole('owner'), connections.disconnectWhatsApp);
+router.post('/whatsapp/disconnect', requirePermission('connections'), connections.disconnectWhatsApp);
 
 // Perfil de WhatsApp Business (ver: cualquier miembro; editar: dueño).
 router.get('/whatsapp/profile', connections.getWhatsappProfile);
 router.put(
   '/whatsapp/profile',
-  requireBusinessRole('owner'),
+  requirePermission('connections'),
   validate(connections.updateWhatsappProfileSchema),
   connections.updateWhatsappProfile
 );
@@ -31,22 +31,22 @@ router.put(
 // Facebook Messenger: conectar/elegir Página/desconectar (solo dueño).
 router.post(
   '/messenger',
-  requireBusinessRole('owner'),
+  requirePermission('connections'),
   validate(connections.connectMessengerSchema),
   connections.connectMessenger
 );
 router.post(
   '/messenger/select',
-  requireBusinessRole('owner'),
+  requirePermission('connections'),
   validate(connections.selectMessengerPageSchema),
   connections.selectMessengerPage
 );
-router.post('/messenger/disconnect', requireBusinessRole('owner'), connections.disconnectMessenger);
+router.post('/messenger/disconnect', requirePermission('connections'), connections.disconnectMessenger);
 
 // Ajustes por canal (pausa, preguntas iniciales, saludo): dueño.
 router.put(
   '/settings',
-  requireBusinessRole('owner'),
+  requirePermission('connections'),
   validate(connections.channelSettingsSchema),
   connections.updateChannelSettings
 );
@@ -54,23 +54,23 @@ router.put(
 // Instagram DMs (cuenta profesional ligada a una Página): acción del DUEÑO.
 router.post(
   '/instagram',
-  requireBusinessRole('owner'),
+  requirePermission('connections'),
   validate(connections.connectMessengerSchema),
   connections.connectInstagram
 );
 router.post(
   '/instagram/select',
-  requireBusinessRole('owner'),
+  requirePermission('connections'),
   validate(connections.selectInstagramSchema),
   connections.selectInstagramAccount
 );
-router.post('/instagram/disconnect', requireBusinessRole('owner'), connections.disconnectInstagram);
+router.post('/instagram/disconnect', requirePermission('connections'), connections.disconnectInstagram);
 
 // Plantillas de la WABA (ver: cualquier miembro; crear: dueño).
 router.get('/whatsapp/templates', connections.listWhatsappTemplates);
 router.post(
   '/whatsapp/templates',
-  requireBusinessRole('owner'),
+  requirePermission('connections'),
   validate(connections.createTemplateSchema),
   connections.createWhatsappTemplate
 );

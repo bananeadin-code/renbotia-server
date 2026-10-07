@@ -13,6 +13,13 @@ const membershipSchema = new mongoose.Schema(
     business: { type: mongoose.Schema.Types.ObjectId, ref: 'Business', required: true, index: true },
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     role: { type: String, enum: ['owner', 'colaborador'], default: 'colaborador' },
+    // Permisos del colaborador (el dueño los tiene todos, se ignoran para él).
+    permissions: {
+      simulator: { type: Boolean, default: true },
+      training: { type: Boolean, default: true },
+      profile: { type: Boolean, default: false },
+      connections: { type: Boolean, default: false },
+    },
   },
   { timestamps: true }
 );

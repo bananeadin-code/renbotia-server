@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { requireAuth } from '../middleware/auth.middleware.js';
-import { requireBusiness } from '../middleware/tenant.middleware.js';
+import { requireBusiness, requirePermission } from '../middleware/tenant.middleware.js';
 import { validate } from '../middleware/validate.middleware.js';
 import * as business from '../controllers/business.controller.js';
 
@@ -14,15 +14,16 @@ router.get('/projects', requireAuth, business.listMyProjects);
 router.use(requireAuth, requireBusiness);
 
 router.get('/me', business.getMyBusiness);
-router.patch('/me', validate(business.updateBusinessSchema), business.updateMyBusiness);
+router.patch('/me', requirePermission('profile'), validate(business.updateBusinessSchema), business.updateMyBusiness);
 router.get('/audit', business.getAuditLog); // bitácora de auditoría del negocio
 
 // Verificación de propiedad del número de WhatsApp (OTP; SMS mockeado por ahora).
 router.post(
   '/whatsapp/send-code',
+  requirePermission('profile'),
   validate(business.sendWhatsappCodeSchema),
   business.sendWhatsappCode
 );
-router.post('/whatsapp/verify', validate(business.verifyWhatsappSchema), business.verifyWhatsapp);
+router.post('/whatsapp/verify', requirePermission('profile'), validate(business.verifyWhatsappSchema), business.verifyWhatsapp);
 
 export default router;

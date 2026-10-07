@@ -57,6 +57,7 @@ export async function processMessage({
   channel = 'simulator',
   customer = null, // { phone, name } cuando viene de WhatsApp real
   source = 'simulator', // etiqueta para UsageLog ('simulator' | 'whatsapp')
+  userId = null, // quién del equipo usa el simulador (control de uso)
 }) {
   // Texto efectivo para historial/título: si es solo imagen, un marcador legible.
   const userText = (message || '').trim() || (image ? '(imagen del cliente)' : '');
@@ -117,6 +118,7 @@ export async function processMessage({
       // IGSID en Instagram. Permite rutear la conversación en canales sin teléfono.
       customerId: customer?.id || customer?.phone || '',
       customerName: customer?.name || '',
+      startedBy: channel === 'simulator' ? userId : null,
       messages: [],
     });
   }
@@ -352,6 +354,8 @@ export async function processMessage({
     totalTokens,
     model,
     source,
+    user: source === 'simulator' ? userId : null,
+    chat: chat._id,
   });
 
   return {
