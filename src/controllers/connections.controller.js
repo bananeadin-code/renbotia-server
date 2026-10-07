@@ -29,6 +29,7 @@ import {
   syncMessengerProfile,
 } from '../services/messenger.service.js';
 import { listInstagramAccounts } from '../services/instagram.service.js';
+import { isChannelPaused } from '../utils/botAvailability.js';
 
 /**
  * ¿Messenger / Instagram está disponible para este usuario? Abierto a todos con su
@@ -535,14 +536,21 @@ export const disconnectInstagram = asyncHandler(async (req, res) => {
 
 function channelSettingsView(business) {
   const cs = business?.channelSettings || {};
+  // La pausa con fecha vence sola: se muestra activa solo mientras dura.
+  const until = (k) => (isChannelPaused(business, k) && cs[k]?.pausedUntil ? cs[k].pausedUntil : null);
   return {
-    whatsapp: { paused: Boolean(cs.whatsapp?.paused) },
+    whatsapp: { paused: isChannelPaused(business, 'whatsapp'), pausedUntil: until('whatsapp') },
     facebook: {
-      paused: Boolean(cs.facebook?.paused),
+      paused: isChannelPaused(business, 'facebook'),
+      pausedUntil: until('facebook'),
       iceBreakers: cs.facebook?.iceBreakers || [],
       greeting: cs.facebook?.greeting || '',
     },
-    instagram: { paused: Boolean(cs.instagram?.paused), iceBreakers: cs.instagram?.iceBreakers || [] },
+    instagram: {
+      paused: isChannelPaused(business, 'instagram'),
+      pausedUntil: until('instagram'),
+      iceBreakers: cs.instagram?.iceBreakers || [],
+    },
   };
 }
 
@@ -583,8 +591,11 @@ export const updateChannelSettings = asyncHandler(async (req, res) => {
   if (!business.channelSettings) business.channelSettings = {};
   const cs = business.channelSettings[channel] || {};
 
-  const wasPaused = Boolean(cs.paused);
-  if (paused !== undefined) cs.paused = paused;
+  const wasPaused = isChannelPaused(business, channel);
+  if (paused !== undefined) {
+    cs.paused = paused;
+    cs.pausedUntil = null; // un cambio manual quita cualquier pausa con fecha
+  }
   const profileChanged =
     channel !== 'whatsapp' &&
     ((iceBreakers !== undefined && JSON.stringify(iceBreakers) !== JSON.stringify(cs.iceBreakers || [])) ||

@@ -85,16 +85,59 @@ const businessSchema = new mongoose.Schema(
     // el bot no contesta. iceBreakers: preguntas iniciales (Messenger/Instagram),
     // greeting: saludo de la pantalla de bienvenida de Messenger.
     channelSettings: {
-      whatsapp: { paused: { type: Boolean, default: false } },
+      // pausedUntil: pausa temporal (p. ej. "pausa el bot hasta las 6" desde WhatsApp).
+      whatsapp: { paused: { type: Boolean, default: false }, pausedUntil: { type: Date, default: null } },
       facebook: {
         paused: { type: Boolean, default: false },
+        pausedUntil: { type: Date, default: null },
         iceBreakers: { type: [String], default: [] },
         greeting: { type: String, default: '', maxlength: 160 },
       },
       instagram: {
         paused: { type: Boolean, default: false },
+        pausedUntil: { type: Date, default: null },
         iceBreakers: { type: [String], default: [] },
       },
+    },
+    // ── Control del dueño desde WhatsApp ──
+    // Números personales (wa_id) del DUEÑO vinculados con un código de un solo uso
+    // enviado desde ese número al bot. Máx. 2. lastUsedAt: si pasan 30 días sin
+    // uso, la vinculación vence y hay que volver a vincular.
+    ownerWhatsApp: {
+      type: [
+        {
+          _id: false,
+          waId: { type: String, required: true },
+          linkedAt: { type: Date, default: Date.now },
+          lastUsedAt: { type: Date, default: Date.now },
+          // "modo cliente": el dueño prueba su bot como cliente por un rato.
+          customerModeUntil: { type: Date, default: undefined },
+        },
+      ],
+      default: [],
+    },
+    // Código de vinculación vigente: solo se guarda su hash (sha256) y vence en 10 min.
+    ownerLinkCode: {
+      hash: { type: String, default: '', select: false },
+      expiresAt: { type: Date, default: null },
+    },
+    // Intentos fallidos de vinculación (máx. 5 por hora) contra fuerza bruta.
+    ownerLinkFailures: {
+      count: { type: Number, default: 0 },
+      windowStart: { type: Date, default: null },
+    },
+    // Acción que el dueño pidió por WhatsApp y espera su "sí" (vence en 5 min).
+    ownerPending: {
+      action: { type: String, default: '' },
+      args: { type: mongoose.Schema.Types.Mixed, default: null },
+      summary: { type: String, default: '' },
+      waId: { type: String, default: '' },
+      expiresAt: { type: Date, default: null },
+    },
+    // Tope diario de mensajes del dueño al asistente (cuidar el saldo).
+    ownerUsage: {
+      day: { type: String, default: '' },
+      count: { type: Number, default: 0 },
     },
     // Reporte semanal del lunes (resultados, leads y pendientes por enseñar).
     weeklyReport: { type: Boolean, default: true },

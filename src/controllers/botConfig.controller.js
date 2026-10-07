@@ -155,3 +155,51 @@ export const updateBotConfig = asyncHandler(async (req, res) => {
   });
   res.json({ success: true, data: { botConfig: config, planKey, limits: getPlanLimits(planKey) } });
 });
+
+/* ── Avisos temporales ("hoy cerramos a las 4") ─────────────────────────────── */
+
+const activeNotices = (cfg) => {
+  const now = Date.now();
+  return (cfg?.notices || [])
+    .filter((n) => !n.until || new Date(n.until).getTime() > now)
+    .map((n) => ({ id: n._id, text: n.text, until: n.until, via: n.via, createdAt: n.createdAt }));
+};
+
+/** GET /api/botconfig/notices — avisos vigentes. */
+export const listNotices = asyncHandler(async (req, res) => {
+  const cfg = await BotConfig.findOne({ business: req.businessId }).select('notices').lean();
+  res.json({ success: true, data: { notices: activeNotices(cfg) } });
+});
+
+export const noticeSchema = z.object({
+  text: z.string().trim().min(3, 'Escribe el aviso').max(200),
+  until: z.string().datetime().nullable().optional(),
+});
+
+/** POST /api/botconfig/notices — agrega un aviso (máx. 10 vigentes). */
+export const addNotice = asyncHandler(async (req, res) => {
+  const issues = await validateTrainingConfig({ extraContext: req.body.text });
+  if (issues.length) {
+    throw new ApiError(422, issues[0]?.reason || 'Ese aviso no parece información del negocio.', { code: 'CONTENT_REJECTED' });
+  }
+  const until = req.body.until ? new Date(req.body.until) : null;
+  if (until && until.getTime() <= Date.now()) throw ApiError.badRequest('La fecha de vencimiento ya pasó.');
+  const cfg = await BotConfig.findOne({ business: req.businessId });
+  if (!cfg) throw ApiError.notFound('El bot no está configurado');
+  // Se limpian los vencidos y se deja un máximo de 10.
+  cfg.notices = [...activeNotices(cfg).map((n) => ({ text: n.text, until: n.until, via: n.via, createdAt: n.createdAt })), { text: req.body.text, until, via: 'panel' }].slice(-10);
+  await cfg.save();
+  void logAudit({ businessId: req.businessId, userId: req.userId, action: 'botconfig.notice', summary: `Agregó el aviso "${req.body.text.slice(0, 60)}".` });
+  res.status(201).json({ success: true, data: { notices: activeNotices(cfg) } });
+});
+
+/** DELETE /api/botconfig/notices/:id */
+export const removeNotice = asyncHandler(async (req, res) => {
+  const cfg = await BotConfig.findOneAndUpdate(
+    { business: req.businessId },
+    { $pull: { notices: { _id: req.params.id } } },
+    { new: true }
+  );
+  res.json({ success: true, data: { notices: activeNotices(cfg) } });
+});
+

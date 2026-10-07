@@ -11,6 +11,7 @@ import {
   downloadMessengerImage,
 } from '../services/messenger.service.js';
 import { sendInstagramText, sendInstagramImage, getInstagramProfileName } from '../services/instagram.service.js';
+import { isLinkCode, tryLinkOwner, ownerEntry, handleOwnerMessage } from '../services/ownerControl.service.js';
 
 /**
  * Webhook de WhatsApp Cloud API (Meta).
@@ -109,6 +110,22 @@ async function handleMessage({ business, phoneNumberId, msg, customerName }) {
   if (alreadyProcessed(msg.id)) return;
 
   const from = msg.from; // wa_id del cliente (solo dígitos)
+
+  // Control del dueño: código de vinculación "RB-XXXXXXXX" o mensaje de un número
+  // de dueño ya vinculado. Nunca pasan al bot de clientes (salvo "modo cliente").
+  try {
+    if (msg.type === 'text' && isLinkCode(msg.text?.body)) {
+      await tryLinkOwner({ business, waId: from, text: msg.text.body, phoneNumberId });
+      return;
+    }
+    if (ownerEntry(business, from)) {
+      const handled = await handleOwnerMessage({ business, waId: from, msg, phoneNumberId });
+      if (handled) return;
+    }
+  } catch (err) {
+    logger.error(`Dueño por WhatsApp: ${err.message}`);
+    return;
+  }
   let text = '';
   let image = null;
   if (msg.type === 'text') {

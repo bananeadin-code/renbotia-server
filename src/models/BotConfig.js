@@ -56,6 +56,20 @@ const botConfigSchema = new mongoose.Schema(
     // Respuestas rápidas (canned) que el AGENTE inserta al responder en modo
     // manual desde la bandeja. No las usa el bot; son atajos para la persona.
     quickReplies: { type: [String], default: [] },
+    // Avisos temporales ("hoy cerramos a las 4", "ya no hay pastel de chocolate"):
+    // información vigente que el bot comunica y que vence sola. Se ponen desde
+    // Entrenamiento o desde el WhatsApp del dueño.
+    notices: {
+      type: [
+        {
+          text: { type: String, required: true, maxlength: 200 },
+          until: { type: Date, default: null }, // null = hasta que se quite
+          createdAt: { type: Date, default: Date.now },
+          via: { type: String, enum: ['panel', 'whatsapp'], default: 'panel' },
+        },
+      ],
+      default: [],
+    },
     // Seguimiento automático (Pro/Elite): si el cliente deja de responder tras la
     // última respuesta del bot, se le escribe UNA vez dentro de la ventana de 24h.
     // mode 'ai' = el bot redacta según la conversación; 'custom' = texto fijo.

@@ -15,6 +15,7 @@ import {
 import { sendOtp, verifyOtp } from './otp.service.js';
 import { logger } from '../utils/logger.js';
 import { resolveReferrer } from './referral.service.js';
+import { Business } from '../models/Business.js';
 
 /**
  * Lógica de negocio de autenticación, sin acoplarse a req/res.
@@ -328,6 +329,8 @@ export async function resetPassword({ token, password }) {
   user.failedLoginAttempts = 0;
   user.lockUntil = undefined;
   await user.save();
+  // Seguridad: también se desvinculan sus números de WhatsApp de dueño.
+  await Business.updateMany({ owner: user._id }, { $set: { ownerWhatsApp: [], 'ownerPending.action': '' } });
   logger.info(`Auth: contraseña restablecida, sesiones invalidadas — userId=${user.id}`);
 
   return { ok: true };

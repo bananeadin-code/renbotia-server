@@ -28,7 +28,7 @@ const usageLogSchema = new mongoose.Schema(
     // Canal que originó el consumo. instagram/facebook quedan listos para Fase 2.
     source: {
       type: String,
-      enum: ['simulator', 'whatsapp', 'instagram', 'facebook', 'web', 'summary', 'followup'],
+      enum: ['simulator', 'whatsapp', 'instagram', 'facebook', 'web', 'summary', 'followup', 'owner'],
       default: 'simulator',
     },
     // true = consumo de DEMO/seed (no representa gasto real de la API). Las

@@ -75,13 +75,20 @@ export function describeSchedule(schedule) {
   return days.map((d) => `${DAY_NAMES[d.day]} ${d.open}–${d.close}`).join(', ');
 }
 
+/** ¿El canal está en pausa ahora? Una pausa con fecha (pausedUntil) vence sola. */
+export function isChannelPaused(business, channel, now = new Date()) {
+  const cs = business?.channelSettings?.[channel];
+  if (!cs?.paused) return false;
+  return !cs.pausedUntil || new Date(cs.pausedUntil) > now;
+}
+
 /**
  * Decide qué hace el bot con un mensaje entrante.
  * @returns {{ reply: boolean, reason?: 'channel_paused'|'business_hours', closed: boolean }}
  */
 export function botAvailability({ business, schedule, channel, source }) {
   if (source === 'simulator') return { reply: true, closed: false };
-  if (business?.channelSettings?.[channel]?.paused) return { reply: false, reason: 'channel_paused', closed: false };
+  if (isChannelPaused(business, channel)) return { reply: false, reason: 'channel_paused', closed: false };
   const open = isOpenNow(schedule);
   if (open === null) return { reply: true, closed: false };
   if (schedule.botMode === 'closed_only' && open) return { reply: false, reason: 'business_hours', closed: false };
