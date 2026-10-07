@@ -130,6 +130,8 @@ export async function retrievePaymentMethod(paymentMethodId) {
   const card = pm.card || {};
   return {
     id: pm.id,
+    // Customer al que está asociada (para verificar que la tarjeta es del negocio).
+    customer: typeof pm.customer === 'string' ? pm.customer : pm.customer?.id || '',
     brand: card.brand || '',
     last4: card.last4 || '',
     expMonth: card.exp_month || 0,
@@ -177,19 +179,32 @@ export async function deleteCustomer(customerId) {
  * motivo (tarjeta rechazada, requiere autenticación 3DS, etc.).
  * @returns {Promise<{ id, status }>}
  */
-export async function chargeOffSession({ customerId, paymentMethodId, amountMXN, description, metadata }) {
+export async function chargeOffSession({
+  customerId,
+  paymentMethodId,
+  amountMXN,
+  description,
+  metadata,
+  idempotencyKey,
+}) {
   const stripe = getStripe();
   try {
-    const pi = await stripe.paymentIntents.create({
-      amount: Math.round(amountMXN * 100),
-      currency: 'mxn',
-      customer: customerId,
-      payment_method: paymentMethodId,
-      off_session: true,
-      confirm: true,
-      description,
-      metadata,
-    });
+    const pi = await stripe.paymentIntents.create(
+      {
+        amount: Math.round(amountMXN * 100),
+        currency: 'mxn',
+        customer: customerId,
+        payment_method: paymentMethodId,
+        payment_method_types: ['card'],
+        off_session: true,
+        confirm: true,
+        description,
+        metadata,
+      },
+      // Idempotencia: si la misma petición se repite (reintento de red, proceso
+      // reiniciado), Stripe devuelve el MISMO cobro en vez de cobrar dos veces.
+      idempotencyKey ? { idempotencyKey } : undefined
+    );
     return { id: pi.id, status: pi.status };
   } catch (err) {
     // Stripe expone el motivo en err.code (p.ej. 'authentication_required',
@@ -199,4 +214,19 @@ export async function chargeOffSession({ customerId, paymentMethodId, amountMXN,
     e.paymentIntentId = err?.raw?.payment_intent?.id || err?.payment_intent?.id || '';
     throw e;
   }
+}
+
+/**
+ * Busca un cobro YA exitoso del Customer cuya metadata[key] === value (p. ej. la
+ * renovación de un periodo concreto). Sirve para reconciliar: si el proceso se
+ * cayó después de cobrar y antes de registrar el pago, no se vuelve a cobrar.
+ * @returns {Promise<{ id: string, amount: number } | null>}
+ */
+export async function findSucceededIntent({ customerId, key, value, sinceDate }) {
+  if (!customerId) return null;
+  const params = { customer: customerId, limit: 50 };
+  if (sinceDate) params.created = { gte: Math.floor(new Date(sinceDate).getTime() / 1000) };
+  const list = await getStripe().paymentIntents.list(params);
+  const pi = list.data.find((p) => p.status === 'succeeded' && p.metadata?.[key] === value);
+  return pi ? { id: pi.id, amount: pi.amount } : null;
 }

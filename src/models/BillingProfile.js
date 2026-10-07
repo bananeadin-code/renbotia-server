@@ -39,6 +39,9 @@ const billingProfileSchema = new mongoose.Schema(
       // cobros en cadena si algo se descontrola).
       maxPerPeriod: { type: Number, default: 5, min: 1, max: 50 },
     },
+    // Candado de la recarga automática: varios mensajes simultáneos con saldo
+    // bajo no deben disparar varios cobros a la vez.
+    autoRechargeLockUntil: { type: Date, default: null },
   },
   { timestamps: true }
 );

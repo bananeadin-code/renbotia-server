@@ -5,6 +5,7 @@ import { logger } from './utils/logger.js';
 import { startFollowUpScheduler } from './services/followUp.service.js';
 import { startBackupScheduler } from './services/backup.service.js';
 import { startWeeklyReportScheduler } from './services/weeklyReport.service.js';
+import { startRenewalScheduler } from './services/renewal.service.js';
 
 /**
  * Punto de entrada: conecta a la base de datos y arranca el servidor HTTP.
@@ -24,6 +25,8 @@ async function start() {
   startBackupScheduler();
   // Reporte semanal del lunes al dueño (resultados en pesos, leads y pendientes).
   startWeeklyReportScheduler();
+  // Renovación mensual con cobro a la tarjeta guardada (Pro/Elite).
+  startRenewalScheduler();
 
   // Apagado ordenado
   const shutdown = (signal) => {

@@ -26,6 +26,7 @@ import importRoutes from './import.routes.js';
 import referralRoutes from './referral.routes.js';
 import ownerControlRoutes from './ownerControl.routes.js';
 import { runFollowUps } from '../services/followUp.service.js';
+import { runRenewals } from '../services/renewal.service.js';
 
 /**
  * Monta todas las rutas de la API bajo /api.
@@ -54,6 +55,17 @@ router.post('/internal/followups', async (req, res, next) => {
   if (!secret || req.get('x-cron-secret') !== secret) return res.sendStatus(404);
   try {
     res.json({ success: true, data: await runFollowUps() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Disparo externo del cobrador de renovaciones (mismo esquema que el anterior).
+router.post('/internal/renewals', async (req, res, next) => {
+  const secret = process.env.CRON_SECRET;
+  if (!secret || req.get('x-cron-secret') !== secret) return res.sendStatus(404);
+  try {
+    res.json({ success: true, data: await runRenewals() });
   } catch (err) {
     next(err);
   }

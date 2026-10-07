@@ -39,8 +39,25 @@ const subscriptionSchema = new mongoose.Schema(
     // Evita spamear el aviso de "crédito bajo": se marca al notificar y se
     // reinicia al renovar el periodo o al recargar créditos.
     lowBalanceNotified: { type: Boolean, default: false },
+
+    // ── Renovación con cobro (ver services/renewal.service.js) ──
+    // Intentos de cobro del periodo vencido (se reinician al renovar).
+    renewalAttempts: { type: Number, default: 0 },
+    // Próximo intento de cobro (reintentos con espera; null = en cuanto venza).
+    nextRenewalAttemptAt: { type: Date, default: null },
+    // Desde cuándo está vencida sin pago (inicio del periodo de gracia).
+    pastDueSince: { type: Date, default: null },
+    // Último motivo de fallo de cobro (card_declined, no_card, etc.).
+    lastRenewalError: { type: String, default: '' },
+    // Candado del cobro: evita que dos procesos cobren la misma renovación.
+    renewalLockUntil: { type: Date, default: null },
+    // Fecha de renovación para la que ya se envió el aviso previo (anti-spam).
+    renewalReminderFor: { type: Date, default: null },
   },
   { timestamps: true }
 );
+
+// El cobrador busca renovaciones vencidas por fecha.
+subscriptionSchema.index({ renewalDate: 1 });
 
 export const Subscription = mongoose.model('Subscription', subscriptionSchema);

@@ -13,8 +13,9 @@ import {
 } from '../services/stripe.service.js';
 import { ensureCustomer, ensureProfile } from '../services/billingProfile.service.js';
 import { sendPurchaseReceipt } from '../services/email.service.js';
-import { provisionBusiness, loadBusinessBundle } from '../services/business.service.js';
-import { addExtraTokens } from '../services/token.service.js';
+import { loadBusinessBundle } from '../services/business.service.js';
+import { addExtraTokens, isPaidPlanKey, nextPeriodPlanKey } from '../services/token.service.js';
+import { finalizeRenewal, renewalKeyFor, renewSubscription } from '../services/renewal.service.js';
 import { logAudit } from '../services/audit.service.js';
 import { addMonths } from '../utils/dates.js';
 import { Business } from '../models/Business.js';
@@ -27,34 +28,35 @@ const findPack = (key) => CREDIT_PACKS.find((p) => p.key === key);
 
 export const changePlanSchema = z.object({ planKey: z.enum(['free', 'pro', 'elite']) });
 
-// Crea un PaymentIntent embebido para una compra (plan o paquete de créditos).
-// El Free se activa directo (onboarding), no pasa por aquí.
+// Crea un PaymentIntent para una compra (plan, paquete de créditos o el pago
+// manual de una renovación vencida). El Free se activa en el onboarding.
 export const createIntentSchema = z
   .object({
-    kind: z.enum(['plan', 'credits']),
+    kind: z.enum(['plan', 'credits', 'renewal']),
     planKey: z.enum(['pro', 'elite']).optional(),
     packKey: z.enum(CREDIT_PACKS.map((p) => p.key)).optional(),
-    useSavedCard: z.boolean().optional(),
+    useSavedCard: z.boolean().optional(), // compatibilidad: siempre se usa la guardada
   })
-  .refine((d) => (d.kind === 'plan' ? Boolean(d.planKey) : Boolean(d.packKey)), {
-    message: 'Falta planKey (plan) o packKey (créditos) según el tipo de compra',
-  });
+  .refine(
+    (d) => (d.kind === 'plan' ? Boolean(d.planKey) : d.kind === 'credits' ? Boolean(d.packKey) : true),
+    { message: 'Falta planKey (plan) o packKey (créditos) según el tipo de compra' }
+  );
+
+const RENEWAL_LOCK_MS = 10 * 60 * 1000;
 
 /**
  * POST /api/billing/intent
- * Crea un PaymentIntent para pagar DENTRO del sitio (Stripe Elements, sin
- * redirect). Sirve para:
- *  - Plan: onboarding (aún sin negocio; se crea al confirmar) o mejora de plan
- *    (ya tiene negocio; se aplica al instante al confirmar).
- *  - Créditos: compra de un paquete para el negocio actual.
- * Si `useSavedCard` es true y hay tarjeta guardada, el PI se confirma de una vez
- * (on-session); el navegador solo completa 3DS si Stripe lo pide.
+ * Cobro DENTRO del sitio con la TARJETA GUARDADA del negocio ("primero agrega
+ * una tarjeta, luego compra", como Render). La misma tarjeta queda para las
+ * renovaciones mensuales y la recarga automática.
+ *  - plan: mejora a un plan más caro (se aplica al instante al confirmar).
+ *  - credits: paquete de créditos.
+ *  - renewal: pagar ahora una renovación vencida (p. ej. si el banco pidió 3DS).
+ * El PaymentIntent se confirma on-session; si el banco pide autenticación, queda
+ * en `requires_action` y el navegador la completa.
  */
 export const createIntent = asyncHandler(async (req, res) => {
-  // Seguridad de beta: si hay claves LIVE pero el sitio sigue en beta, ninguna
-  // compra puede iniciarse (evita cobros reales por llamadas directas a la API
-  // saltándose la UI oculta). Con claves de prueba (sk_test_) sí se permite,
-  // para poder probar el flujo completo sin dinero real.
+  // Seguridad de beta: con claves LIVE y el sitio en beta no se cobra nada.
   const liveKey = String(env.stripe.secretKey || '').startsWith('sk_live_');
   if (liveKey && env.betaMode) {
     throw new ApiError(403, 'Las compras están deshabilitadas mientras el sitio está en beta.', {
@@ -62,25 +64,30 @@ export const createIntent = asyncHandler(async (req, res) => {
     });
   }
 
-  const { kind, useSavedCard } = req.body;
+  const { kind } = req.body;
+  const business = await Business.findOne({ owner: req.userId }).select('_id');
+  if (!business) throw ApiError.notFound('Primero crea tu negocio para poder comprar.');
+
+  // Tarjeta primero: sin tarjeta guardada no se inicia ningún cobro.
+  const { profile, customerId } = await ensureCustomer(business._id, req.userId);
+  if (!profile.paymentMethod?.id) {
+    throw new ApiError(400, 'Agrega una tarjeta antes de comprar.', { code: 'CARD_REQUIRED' });
+  }
+
+  const sub = await Subscription.findOne({ business: business._id }).populate('plan');
+  if (!sub) throw ApiError.notFound('No hay suscripción para este negocio');
 
   let amountMXN;
   let description;
   let metadata;
-  let customerId;
-  let savedCardBusinessId; // negocio del que tomar la tarjeta guardada (si aplica)
 
   if (kind === 'plan') {
     const plan = findPlan(req.body.planKey);
     if (!plan) throw ApiError.badRequest('Plan inválido');
-
-    // Si ya tiene negocio, es una mejora y habilitamos su Customer (tarjeta
-    // guardada). En el onboarding aún no hay negocio: pago sin customer.
-    const business = await Business.findOne({ owner: req.userId }).select('_id');
-    if (business) {
-      const { customerId: cid } = await ensureCustomer(business._id, req.userId);
-      customerId = cid;
-      savedCardBusinessId = business._id;
+    // Solo mejoras: bajar de plan o mantenerlo se programa para la renovación.
+    const currentPrice = findPlan(sub.plan?.key)?.priceMXN ?? 0;
+    if (plan.priceMXN <= currentPrice) {
+      throw ApiError.badRequest('Para bajar o mantener tu plan usa "Cambiar plan"; aplica en tu renovación.');
     }
     amountMXN = plan.priceMXN;
     description = `Plan ${plan.name} — RenBotIA`;
@@ -88,17 +95,11 @@ export const createIntent = asyncHandler(async (req, res) => {
       type: 'plan',
       planKey: plan.key,
       userId: String(req.userId),
-      context: business ? 'upgrade' : 'onboarding',
+      businessId: String(business._id),
     };
-  } else {
-    // Créditos: se compran para el negocio del usuario.
+  } else if (kind === 'credits') {
     const pack = findPack(req.body.packKey);
     if (!pack) throw ApiError.badRequest('Paquete inválido');
-    const business = await Business.findOne({ owner: req.userId }).select('_id');
-    if (!business) throw ApiError.notFound('No tienes un negocio para comprar créditos');
-    const { customerId: cid } = await ensureCustomer(business._id, req.userId);
-    customerId = cid;
-    savedCardBusinessId = business._id;
     amountMXN = pack.priceMXN;
     description = `${pack.name} — RenBotIA`;
     metadata = {
@@ -107,29 +108,61 @@ export const createIntent = asyncHandler(async (req, res) => {
       userId: String(req.userId),
       businessId: String(business._id),
     };
+  } else {
+    // Renovación vencida pagada a mano.
+    const targetKey = nextPeriodPlanKey(sub);
+    const plan = findPlan(targetKey);
+    if (sub.renewalDate.getTime() > Date.now() || !isPaidPlanKey(targetKey) || !plan) {
+      throw ApiError.badRequest('No tienes una renovación pendiente de pago.');
+    }
+    // Candado: mientras este pago está en curso, el cobrador automático no
+    // intenta cobrar el mismo periodo (evita cobrar dos veces).
+    const now = new Date();
+    const locked = await Subscription.findOneAndUpdate(
+      {
+        _id: sub._id,
+        renewalDate: sub.renewalDate,
+        $or: [{ renewalLockUntil: null }, { renewalLockUntil: { $lte: now } }],
+      },
+      { $set: { renewalLockUntil: new Date(now.getTime() + RENEWAL_LOCK_MS) } }
+    );
+    if (!locked) {
+      throw new ApiError(409, 'Estamos procesando tu renovación. Espera un minuto y revisa de nuevo.', {
+        code: 'RENEWAL_IN_PROGRESS',
+      });
+    }
+    amountMXN = plan.priceMXN;
+    description = `Renovación Plan ${plan.name} — RenBotIA`;
+    metadata = {
+      type: 'renewal',
+      planKey: plan.key,
+      userId: String(req.userId),
+      businessId: String(business._id),
+      subscriptionId: String(sub._id),
+      dueDate: String(sub.renewalDate.getTime()),
+      renewalKey: renewalKeyFor(sub),
+    };
   }
 
-  // Tarjeta guardada (cobro inmediato con el método por defecto del negocio).
-  let paymentMethodId;
-  if (useSavedCard) {
-    if (!savedCardBusinessId) {
-      throw ApiError.badRequest('No hay un negocio con tarjeta guardada para este pago');
+  let pi;
+  try {
+    pi = await createPaymentIntent({
+      amountMXN,
+      customerId,
+      description,
+      metadata,
+      paymentMethodId: profile.paymentMethod.id,
+    });
+  } catch (err) {
+    if (kind === 'renewal') {
+      await Subscription.updateOne({ _id: sub._id }, { $set: { renewalLockUntil: null } });
     }
-    const profile = await ensureProfile(savedCardBusinessId);
-    if (!profile.paymentMethod?.id) {
-      throw ApiError.badRequest('No tienes una tarjeta guardada');
+    // Rechazo de la tarjeta al confirmar: mensaje claro para el usuario.
+    if (err?.type === 'StripeCardError' || err?.code === 'card_declined') {
+      throw new ApiError(402, err.message || 'Tu banco rechazó el cargo.', { code: 'CARD_DECLINED' });
     }
-    paymentMethodId = profile.paymentMethod.id;
-    if (!customerId) customerId = profile.stripeCustomerId;
+    throw err;
   }
-
-  const pi = await createPaymentIntent({
-    amountMXN,
-    customerId,
-    description,
-    metadata,
-    paymentMethodId,
-  });
 
   res.json({
     success: true,
@@ -144,39 +177,35 @@ export const createIntent = asyncHandler(async (req, res) => {
   });
 });
 
-// Datos de onboarding que el cliente reenvía al confirmar el pago del plan.
-const onboardingPayload = z
-  .object({
-    business: z.object({
-      // Opcional: datos del negocio se pueden completar luego en el panel.
-      name: z.string().max(80).optional().default(''),
-      industry: z.enum(['legal', 'contable', 'consultoria', 'agencia', 'otro']).optional(),
-      industryOther: z.string().max(60).optional(),
-      whatsappNumber: z.string().max(30).optional(),
-    }),
-    botConfig: z.any().optional(),
-  })
-  .optional();
-
 export const confirmSchema = z.object({
-  paymentIntentId: z.string().min(10),
-  onboarding: onboardingPayload,
+  paymentIntentId: z.string().min(10).max(255),
 });
+
+// Registra el pago ANTES de entregar: el índice único de stripeSessionId hace
+// que, si llegan dos confirmaciones a la vez, solo una entregue. Devuelve null
+// si este pago ya se había procesado.
+async function claimPayment(doc) {
+  try {
+    return await Payment.create(doc);
+  } catch (err) {
+    if (err?.code === 11000) return null;
+    throw err;
+  }
+}
 
 /**
  * POST /api/billing/confirm
- * Se llama tras confirmar el pago embebido en el navegador. Verifica en Stripe
- * que el PaymentIntent está 'succeeded' y recién entonces activa el plan (crea
- * el negocio) o acredita los tokens. Idempotente vía Payment.stripeSessionId
- * (guarda el id del PaymentIntent). Al entregar, envía el comprobante por email.
+ * Se llama tras confirmar el pago en el navegador. Verifica en Stripe que el
+ * PaymentIntent es de este usuario y está 'succeeded', y entonces entrega (plan,
+ * créditos o renovación) UNA sola vez.
  */
 export const confirmCheckout = asyncHandler(async (req, res) => {
-  const { paymentIntentId, onboarding } = req.body;
+  const { paymentIntentId } = req.body;
 
   const pi = await retrievePaymentIntent(paymentIntentId);
 
-  // Seguridad: el pago debe pertenecer a este usuario.
-  if (pi.metadata?.userId && pi.metadata.userId !== String(req.userId)) {
+  // Seguridad: la metadata la pone el servidor al crear el pago; debe coincidir.
+  if (!pi.metadata?.userId || pi.metadata.userId !== String(req.userId)) {
     throw ApiError.forbidden('Este pago no te pertenece');
   }
   if (pi.status !== 'succeeded') {
@@ -186,122 +215,113 @@ export const confirmCheckout = asyncHandler(async (req, res) => {
     });
   }
 
-  // Idempotencia: si ya procesamos este pago, no repetimos la entrega.
-  const already = await Payment.findOne({ stripeSessionId: pi.id });
-  if (already) {
-    return res.json({
-      success: true,
-      data: { alreadyProcessed: true, type: already.type },
-    });
-  }
-
   const type = pi.metadata?.type;
+  const business = await Business.findOne({ _id: pi.metadata.businessId, owner: req.userId });
+  if (!business) throw ApiError.forbidden('Negocio inválido para esta compra');
+  const amountMXN = pi.amount / 100;
 
   if (type === 'plan') {
     const plan = findPlan(pi.metadata.planKey);
     if (!plan) throw ApiError.badRequest('Plan inválido en el pago');
 
-    // Si el usuario YA tiene negocio, es una mejora de plan: se aplica al
-    // instante (nuevo límite de tokens, ventajas del plan, sin esperar a la
-    // renovación). Si no, es el onboarding y se crea el negocio.
-    const existing = await Business.findOne({ owner: req.userId });
-    let bundle;
-    let businessId;
-    if (existing) {
-      await upgradeSubscriptionPlan(existing._id, plan.key);
-      businessId = existing._id;
-      bundle = await loadBusinessBundle(existing._id);
-    } else {
-      bundle = await provisionBusiness({
-        owner: req.userId,
-        planKey: plan.key,
-        business: onboarding?.business || { name: 'Mi negocio' },
-        botConfig: onboarding?.botConfig || {},
-        stripeSessionId: pi.id,
-      });
-      businessId = bundle.business._id;
-    }
-
-    await Payment.create({
+    const claim = await claimPayment({
       user: req.userId,
-      business: businessId,
+      business: business._id,
       type: 'plan',
       description: `Plan ${plan.name}`,
-      amountMXN: plan.priceMXN,
+      amountMXN,
       planKey: plan.key,
       stripeSessionId: pi.id,
     });
+    if (!claim) return res.json({ success: true, data: { alreadyProcessed: true, type } });
+
+    let bundle;
+    try {
+      await upgradeSubscriptionPlan(business._id, plan.key);
+      bundle = await loadBusinessBundle(business._id);
+    } catch (err) {
+      await Payment.deleteOne({ _id: claim._id }); // libera para reintentar
+      throw err;
+    }
 
     void logAudit({
-      businessId,
+      businessId: business._id,
       userId: req.userId,
-      action: existing ? 'plan.upgrade' : 'plan.activate',
-      summary: existing ? `Mejoró al plan ${plan.name}.` : `Activó el plan ${plan.name}.`,
-      metadata: { planKey: plan.key, amountMXN: plan.priceMXN },
+      action: 'plan.upgrade',
+      summary: `Mejoró al plan ${plan.name}.`,
+      metadata: { planKey: plan.key, amountMXN },
     });
-
-    // Comprobante por email (fail-open, no bloquea la respuesta).
     void sendPurchaseReceipt({
       userId: req.userId,
-      businessName: bundle?.business?.name,
+      businessName: business.name,
       type: 'plan',
       description: `Plan ${plan.name}`,
-      amountMXN: plan.priceMXN,
+      amountMXN,
       reference: pi.id,
     });
-
-    return res
-      .status(201)
-      .json({ success: true, data: { type: 'plan', bundle, upgraded: Boolean(existing) } });
+    return res.status(201).json({ success: true, data: { type: 'plan', bundle, upgraded: true } });
   }
 
   if (type === 'credits') {
     const pack = findPack(pi.metadata.packKey);
     if (!pack) throw ApiError.badRequest('Paquete inválido en el pago');
 
-    // Verifica que el negocio del pago pertenece al usuario.
-    const business = await Business.findOne({
-      _id: pi.metadata.businessId,
-      owner: req.userId,
-    });
-    if (!business) throw ApiError.forbidden('Negocio inválido para esta compra');
-
     const subscription = await Subscription.findOne({ business: business._id }).populate('plan');
     if (!subscription) throw ApiError.notFound('No hay suscripción para acreditar');
 
-    const balance = await addExtraTokens(subscription, pack.tokens);
-
-    await Payment.create({
+    const claim = await claimPayment({
       user: req.userId,
       business: business._id,
       type: 'credits',
       description: pack.name,
-      amountMXN: pack.priceMXN,
+      amountMXN,
       tokens: pack.tokens,
       packKey: pack.key,
       stripeSessionId: pi.id,
     });
+    if (!claim) return res.json({ success: true, data: { alreadyProcessed: true, type } });
+
+    let balance;
+    try {
+      balance = await addExtraTokens(subscription, pack.tokens);
+    } catch (err) {
+      await Payment.deleteOne({ _id: claim._id });
+      throw err;
+    }
 
     void sendPurchaseReceipt({
       userId: req.userId,
       businessName: business.name,
       type: 'credits',
       description: pack.name,
-      amountMXN: pack.priceMXN,
+      amountMXN,
       tokens: pack.tokens,
       reference: pi.id,
       availableAfter: balance.available,
     });
-
     void logAudit({
       businessId: business._id,
       userId: req.userId,
       action: 'credits.purchase',
       summary: `Compró ${pack.name}.`,
-      metadata: { packKey: pack.key, amountMXN: pack.priceMXN, tokens: pack.tokens },
+      metadata: { packKey: pack.key, amountMXN, tokens: pack.tokens },
     });
-
     return res.json({ success: true, data: { type: 'credits', balance } });
+  }
+
+  if (type === 'renewal') {
+    const sub = await Subscription.findOne({ _id: pi.metadata.subscriptionId, business: business._id });
+    if (!sub) throw ApiError.notFound('No hay suscripción para renovar');
+    const opened = await finalizeRenewal({
+      subscriptionId: sub._id,
+      dueDate: new Date(Number(pi.metadata.dueDate)),
+      planKey: pi.metadata.planKey,
+      paymentIntentId: pi.id,
+      amountMXN,
+      userId: req.userId,
+    });
+    await Subscription.updateOne({ _id: sub._id }, { $set: { renewalLockUntil: null } });
+    return res.json({ success: true, data: { type: 'renewal', renewed: true, alreadyProcessed: !opened } });
   }
 
   throw ApiError.badRequest('Tipo de pago desconocido');
@@ -344,9 +364,26 @@ async function upgradeSubscriptionPlan(businessId, planKey) {
   sub.currentPeriodStart = now;
   sub.renewalDate = addMonths(now, 1);
   sub.tokensUsedThisPeriod = 0; // arranca el nuevo cupo del plan mejorado
+  sub.lowBalanceNotified = false;
+  // Pagó: cualquier renovación vencida queda saldada por este nuevo periodo.
+  sub.renewalAttempts = 0;
+  sub.nextRenewalAttemptAt = null;
+  sub.pastDueSince = null;
+  sub.lastRenewalError = '';
   await sub.save();
   return sub;
 }
+
+// ¿El negocio tiene tarjeta guardada? (requisito para todo lo que se cobra).
+async function hasSavedCard(businessId) {
+  const profile = await ensureProfile(businessId);
+  return Boolean(profile.paymentMethod?.id);
+}
+
+const CARD_FOR_RENEWAL = () =>
+  new ApiError(400, 'Agrega una tarjeta en Facturación: tu plan se renueva con ella cada mes.', {
+    code: 'CARD_REQUIRED',
+  });
 
 /**
  * POST /api/billing/cancel
@@ -381,6 +418,8 @@ export const resumeSubscription = asyncHandler(async (req, res) => {
   if (sub.status !== 'cancelada') {
     throw ApiError.badRequest('La suscripción no está cancelada');
   }
+  const resumeKey = sub.pendingPlanKey || sub.plan?.key;
+  if (isPaidPlanKey(resumeKey) && !(await hasSavedCard(req.businessId))) throw CARD_FOR_RENEWAL();
   sub.status = 'activa';
   await sub.save();
   void logAudit({
@@ -396,7 +435,8 @@ export const resumeSubscription = asyncHandler(async (req, res) => {
  * POST /api/billing/change-plan
  * Programa un cambio de plan para la PRÓXIMA renovación (tradicional): el plan
  * actual sigue hasta la fecha de renovación y a partir de ahí se renueva ya con
- * el nuevo plan. No cobra de inmediato (el modelo de renovación es simulado).
+ * el nuevo plan. No cobra de inmediato: el cobro lo hace el cobrador de
+ * renovaciones (services/renewal.service.js) con la tarjeta guardada.
  */
 export const changePlan = asyncHandler(async (req, res) => {
   const targetKey = req.body.planKey;
@@ -405,6 +445,9 @@ export const changePlan = asyncHandler(async (req, res) => {
 
   const sub = await loadSub(req.businessId);
   const currentKey = sub.plan?.key;
+
+  // Seguir en un plan de pago exige tarjeta guardada (se cobrará al renovar).
+  if (isPaidPlanKey(targetKey) && !(await hasSavedCard(req.businessId))) throw CARD_FOR_RENEWAL();
 
   // Si elige su plan actual, se interpreta como "deshacer" el cambio programado.
   if (targetKey === currentKey) {
@@ -485,12 +528,30 @@ export const savePaymentMethodSchema = z.object({
  */
 export const savePaymentMethod = asyncHandler(async (req, res) => {
   const { profile, customerId } = await ensureCustomer(req.businessId, req.userId);
-  const card = await retrievePaymentMethod(req.body.paymentMethodId);
+  const { customer, ...card } = await retrievePaymentMethod(req.body.paymentMethodId);
+  // Seguridad: la tarjeta debe estar asociada al Customer de ESTE negocio (la
+  // asocia el SetupIntent que creamos); no se acepta un id ajeno.
+  if (!customer || customer !== customerId) {
+    throw ApiError.forbidden('Esta tarjeta no pertenece a tu cuenta');
+  }
   await setDefaultPaymentMethod(customerId, card.id);
 
+  // Reemplazo: la tarjeta anterior se desasocia para no dejar métodos huérfanos.
+  const previousId = profile.paymentMethod?.id;
   profile.paymentMethod = card;
   await profile.save();
-  res.json({ success: true, data: { paymentMethod: card, autoRecharge: profile.autoRecharge } });
+  if (previousId && previousId !== card.id) {
+    detachPaymentMethod(previousId).catch(() => {});
+  }
+
+  // Si tenía una renovación vencida, se reintenta YA con la tarjeta nueva.
+  const sub = await Subscription.findOne({ business: req.businessId }).select('_id renewalDate status');
+  let renewal = null;
+  if (sub && sub.renewalDate.getTime() <= Date.now()) {
+    await Subscription.updateOne({ _id: sub._id }, { $set: { nextRenewalAttemptAt: null } });
+    renewal = await renewSubscription(sub._id).catch(() => null);
+  }
+  res.json({ success: true, data: { paymentMethod: card, autoRecharge: profile.autoRecharge, renewal } });
 });
 
 /**
@@ -511,6 +572,14 @@ export const getPaymentMethod = asyncHandler(async (req, res) => {
  */
 export const deletePaymentMethod = asyncHandler(async (req, res) => {
   const profile = await ensureProfile(req.businessId);
+  // Un plan de pago que se va a renovar necesita tarjeta: se puede CAMBIAR por
+  // otra, pero no quitar sin antes cancelar la renovación o bajar a Free.
+  const sub = await Subscription.findOne({ business: req.businessId }).populate('plan');
+  if (sub && isPaidPlanKey(nextPeriodPlanKey(sub))) {
+    throw new ApiError(409, 'Tu plan se renueva con esta tarjeta. Cámbiala por otra o cancela la renovación antes de quitarla.', {
+      code: 'CARD_IN_USE',
+    });
+  }
   if (profile.paymentMethod?.id) {
     await detachPaymentMethod(profile.paymentMethod.id);
   }

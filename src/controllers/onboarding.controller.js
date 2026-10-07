@@ -54,12 +54,20 @@ export const getOnboardingStatus = asyncHandler(async (req, res) => {
 /**
  * Completa el onboarding creando Business + Subscription + BotConfig.
  *
- * NOTA (Fase 5): en producción este paso se dispara al confirmar el checkout de
- * Stripe. Aquí activamos directamente (simulado) para validar el flujo en local.
- * Reutiliza el mismo provisionBusiness que usará el webhook de Stripe.
+ * Siempre crea la cuenta en Free: para un plan de pago, el asistente crea primero
+ * la cuenta y luego abre el pago (tarjeta guardada → cobro → mejora de plan).
  */
 export const completeOnboarding = asyncHandler(async (req, res) => {
   const { business, planKey, botConfig } = req.body;
+
+  // Seguridad: el onboarding SOLO crea cuentas Free. Los planes de pago se
+  // activan únicamente al confirmar un cobro real (billing/confirm), nunca aquí;
+  // si no, cualquiera podría activarse Pro/Elite gratis llamando a la API.
+  if (planKey !== 'free') {
+    throw new ApiError(402, 'Los planes de pago se activan al confirmar el pago.', {
+      code: 'PAYMENT_REQUIRED',
+    });
+  }
 
   // Sanea contra el plan elegido (p.ej. Free = tono neutral) y valida el uso
   // correcto de cada campo antes de crear el negocio.

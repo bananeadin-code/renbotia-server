@@ -17,6 +17,8 @@ const paymentSchema = new mongoose.Schema(
     tokens: { type: Number, default: 0 }, // solo para compras de créditos
     planKey: { type: String, default: '' },
     packKey: { type: String, default: '' },
+    // true = renovación mensual cobrada a la tarjeta guardada.
+    renewal: { type: Boolean, default: false },
     stripeSessionId: { type: String, required: true, unique: true },
     status: { type: String, enum: ['completed'], default: 'completed' },
   },

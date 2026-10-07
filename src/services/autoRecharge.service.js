@@ -55,6 +55,18 @@ export async function maybeAutoRecharge({ subscription, businessId, userId }) {
     return { recharged: false, error: 'auto_recharge_cap_reached' };
   }
 
+  // Candado atómico: varios mensajes simultáneos con saldo bajo no deben
+  // disparar varios cobros. Solo el que lo toma cobra; los demás siguen.
+  const now = new Date();
+  const lock = await BillingProfile.updateOne(
+    {
+      _id: profile._id,
+      $or: [{ autoRechargeLockUntil: null }, { autoRechargeLockUntil: { $lte: now } }],
+    },
+    { $set: { autoRechargeLockUntil: new Date(now.getTime() + 2 * 60 * 1000) } }
+  );
+  if (!lock.modifiedCount) return { recharged: false };
+
   // Cobro off-session contra la tarjeta guardada.
   try {
     const pi = await chargeOffSession({
@@ -63,6 +75,9 @@ export async function maybeAutoRecharge({ subscription, businessId, userId }) {
       amountMXN: pack.priceMXN,
       description: `Recarga automática — ${pack.name}`,
       metadata: { type: 'auto_recharge', packKey: pack.key, businessId: String(businessId) },
+      // Un cobro por pack, periodo y número de recarga: si se repite la misma
+      // petición, Stripe no cobra dos veces.
+      idempotencyKey: `autorecharge_${businessId}_${new Date(since).getTime()}_${autosThisPeriod + 1}`,
     });
 
     if (pi.status !== 'succeeded') {
@@ -100,5 +115,7 @@ export async function maybeAutoRecharge({ subscription, businessId, userId }) {
     // Tarjeta rechazada, requiere autenticación 3DS, etc. No bloquea al bot.
     logger.warn(`Auto-recarga falló (negocio ${businessId}): ${err.stripeCode || err.message}`);
     return { recharged: false, error: err.stripeCode || 'charge_failed' };
+  } finally {
+    await BillingProfile.updateOne({ _id: profile._id }, { $set: { autoRechargeLockUntil: null } });
   }
 }
