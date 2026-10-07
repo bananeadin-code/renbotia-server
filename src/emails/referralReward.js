@@ -35,7 +35,7 @@ export function referralRewardEmail(p) {
       </td></tr>
       <tr><td style="padding:18px 28px 24px;">
         <a href="${url}" style="display:inline-block;background:${brand};color:#fff;text-decoration:none;font-weight:700;font-size:14px;padding:12px 20px;border-radius:10px;">Ir a mi panel</a>
-        <p style="margin:14px 0 0;color:${muted};font-size:12px;">Sigue invitando: cada 3 negocios más, otro mes de Pro.</p>
+        <p style="margin:14px 0 0;color:${muted};font-size:12px;">Gracias por recomendarnos. Tu enlace sigue activo para que más negocios lo conozcan.</p>
       </td></tr>
       <tr><td style="padding:16px 28px 24px;border-top:1px solid ${line};">
         <p style="margin:0;color:#94a3b8;font-size:12px;">© ${new Date().getFullYear()} RenBotIA</p>

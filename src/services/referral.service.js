@@ -9,8 +9,9 @@ import { sendReferralRewardEmail } from './email.service.js';
 import { logger } from '../utils/logger.js';
 
 /**
- * Referidos: cada 3 negocios que se registran con tu enlace y crean su negocio,
- * ganas 1 mes de Pro gratis.
+ * Referidos: al invitar a 3 negocios que se registran con tu enlace y crean su
+ * negocio, ganas 1 mes de Pro gratis. Es UN regalo por usuario (no se repite
+ * cada 3); después el enlace sigue funcionando, pero ya no da más meses.
  *  - Si estás en Free: tu plan pasa a Pro por un mes y luego vuelve solo a Free
  *    (se programa con pendingPlanKey, sin cobros).
  *  - Si ya pagas Pro o Elite: recibes el equivalente en créditos (el cupo
@@ -20,6 +21,7 @@ import { logger } from '../utils/logger.js';
  */
 
 export const REFERRALS_PER_REWARD = 3;
+export const MAX_REWARDS = 1; // el mes de Pro se regala una sola vez
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // sin 0/O/1/I para dictarlo fácil
 
 function newCode() {
@@ -71,7 +73,7 @@ export async function qualifyReferral(userId) {
 
 async function maybeReward(referrerId) {
   const qualified = await User.countDocuments({ referredBy: referrerId, referralQualifiedAt: { $ne: null } });
-  const earned = Math.floor(qualified / REFERRALS_PER_REWARD);
+  const earned = Math.min(MAX_REWARDS, Math.floor(qualified / REFERRALS_PER_REWARD));
   // Reclamo atómico de la recompensa pendiente (evita darla dos veces).
   const claim = await User.findOneAndUpdate(
     { _id: referrerId, $expr: { $lt: [{ $ifNull: ['$referralRewards', 0] }, earned] } },
@@ -132,13 +134,19 @@ export async function referralSummary(userId) {
     const first = String(n || 'Alguien').trim().split(/\s+/)[0];
     return first.length > 2 ? `${first.slice(0, 1).toUpperCase()}${first.slice(1, 3)}…` : first;
   };
+  const rewards = me?.referralRewards || 0;
+  const claimed = rewards >= MAX_REWARDS;
   return {
     code,
     qualified: totalQualified,
     pending: referred.length - qualified,
-    rewards: me?.referralRewards || 0,
+    rewards,
+    // Ya recibió su mes de Pro: el regalo no se repite.
+    claimed,
     perReward: REFERRALS_PER_REWARD,
-    nextIn: REFERRALS_PER_REWARD - (totalQualified % REFERRALS_PER_REWARD),
+    // Avance hacia el regalo (tope en 3) y cuántos faltan.
+    progress: Math.min(totalQualified, REFERRALS_PER_REWARD),
+    nextIn: claimed ? 0 : Math.max(0, REFERRALS_PER_REWARD - totalQualified),
     recent: referred.slice(0, 10).map((r) => ({
       name: mask(r.name),
       joinedAt: r.createdAt,
