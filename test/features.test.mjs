@@ -142,6 +142,17 @@ describe('API: archivos, widget y seguimiento', () => {
     assert.equal((await send({ message: '' })).status, 400, 'sin texto ni archivo');
   });
 
+  it('el simulador valida los archivos igual que el chat del sitio', async () => {
+    const o = await makeOwner('Sim');
+    const T = await login(o);
+    const send = (body) => fetch(`${A}/simulator/message`, { method: 'POST', headers: H(T, o.business._id), body: JSON.stringify(body) });
+    assert.equal((await send({ message: '' })).status, 400, 'sin texto ni archivo');
+    const fake = { kind: 'pdf', mediaType: 'application/pdf', data: Buffer.from('no soy pdf').toString('base64'), name: 'x.pdf' };
+    assert.equal((await send({ file: fake })).status, 400, 'PDF falso');
+    const badImg = { kind: 'image', mediaType: 'image/jpeg', data: Buffer.from('GIF89a').toString('base64') };
+    assert.equal((await send({ file: badImg })).status, 400, 'imagen con firma que no corresponde');
+  });
+
   it('guardar el seguimiento normal no borra la plantilla configurada', async () => {
     const o = await makeOwner('Tpl');
     const pro = await Plan.findOne({ key: 'pro' });

@@ -11,7 +11,7 @@ import { processMessage } from '../services/simulator.service.js';
 import { logAudit } from '../services/audit.service.js';
 import { logger } from '../utils/logger.js';
 import { env } from '../config/env.js';
-import { isPdf, pdfPageCount, safeFileName, MAX_DOC_BYTES } from '../utils/document.js';
+import { inboundFileSchema, parseUploadedFile } from '../utils/inboundFile.js';
 
 /**
  * Widget web: chat del bot incrustable en el sitio del negocio (Pro/Elite).
@@ -33,8 +33,6 @@ const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 const SESSION_DAILY_CAP = 60;
 // Archivos (foto o PDF) por sesión en 24 h: leerlos cuesta más créditos.
 const SESSION_FILE_CAP = 10;
-const MAX_IMAGE_BYTES = 4 * 1024 * 1024; // límite práctico de la visión de la IA
-const IMAGE_MIMES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
 const newKey = () => crypto.randomBytes(15).toString('base64url'); // 20 chars
 
@@ -255,16 +253,8 @@ const PHONE_RE = /^\+?[\d\s().-]{7,20}$/;
 export const widgetMessageSchema = z.object({
   sessionId: z.string().regex(SESSION_RE, 'Sesión no válida'),
   message: z.string().trim().max(1000).optional().default(''),
-  // Foto o PDF del visitante (Elite). base64 sin prefijo data:. El tamaño real se
-  // valida al decodificar; aquí solo se acota el texto (~5 MB en base64).
-  file: z
-    .object({
-      kind: z.enum(['image', 'pdf']),
-      mediaType: z.string().max(60),
-      data: z.string().max(7_000_000).regex(/^[A-Za-z0-9+/=]+$/, 'Archivo no válido'),
-      name: z.string().max(200).optional().default(''),
-    })
-    .optional(),
+  // Foto o PDF del visitante (Elite).
+  file: inboundFileSchema.optional(),
   after: z.number().int().min(0).optional().default(0),
   // Sitio donde está incrustado el chat (lo manda el iframe) para "dominios permitidos".
   host: z.string().max(253).optional().default(''),
@@ -281,16 +271,6 @@ export const widgetMessageSchema = z.object({
     .optional(),
 }).refine((d) => d.message.length > 0 || d.file, { message: 'Escribe un mensaje', path: ['message'] });
 
-// Firma real del archivo (no basta con el mime que declara el navegador).
-function imageMagicOk(buf, mime) {
-  const hex = buf.subarray(0, 12).toString('hex');
-  if (mime === 'image/jpeg') return hex.startsWith('ffd8ff');
-  if (mime === 'image/png') return hex.startsWith('89504e470d0a1a0a');
-  if (mime === 'image/gif') return hex.startsWith('47494638');
-  if (mime === 'image/webp') return hex.startsWith('52494646') && buf.subarray(8, 12).toString('latin1') === 'WEBP';
-  return false;
-}
-
 /** Valida el archivo del visitante y lo convierte al formato de processMessage. */
 async function parseVisitorFile(business, file) {
   if (!file) return {};
@@ -298,19 +278,7 @@ async function parseVisitorFile(business, file) {
   if (!PLAN_LIMITS[planKey]?.visionInput) {
     throw new ApiError(403, 'Este chat no acepta archivos.', { code: 'FILES_NOT_ALLOWED' });
   }
-  const buf = Buffer.from(file.data, 'base64');
-  if (file.kind === 'image') {
-    if (!IMAGE_MIMES.includes(file.mediaType) || !imageMagicOk(buf, file.mediaType)) {
-      throw ApiError.badRequest('La imagen no es válida (usa JPG, PNG, WEBP o GIF).');
-    }
-    if (buf.length > MAX_IMAGE_BYTES) throw ApiError.badRequest('La imagen pesa demasiado (máximo 4 MB).');
-    return { image: { mediaType: file.mediaType, data: file.data } };
-  }
-  if (!isPdf(buf)) throw ApiError.badRequest('Solo se aceptan documentos PDF.');
-  if (buf.length > MAX_DOC_BYTES) throw ApiError.badRequest('El PDF pesa demasiado (máximo 5 MB).');
-  return {
-    document: { mediaType: 'application/pdf', data: file.data, name: safeFileName(file.name), pages: pdfPageCount(buf) },
-  };
+  return parseUploadedFile(file);
 }
 
 /** POST /api/widget/public/:key/message — el visitante escribe; responde el bot. */
