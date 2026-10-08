@@ -1,7 +1,10 @@
 import { z } from 'zod';
+import { bodyParameters, renderTemplate, fillPlaceholders } from '../utils/waTemplate.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiError } from '../utils/ApiError.js';
+import mongoose from 'mongoose';
 import { ChatSimulation } from '../models/ChatSimulation.js';
+import { ChatAttachment } from '../models/ChatAttachment.js';
 import { UsageLog } from '../models/UsageLog.js';
 import '../models/User.js'; // populate de startedBy
 import { Business } from '../models/Business.js';
@@ -10,6 +13,7 @@ import { sendText, sendTemplate, listTemplates } from '../services/whatsapp.serv
 import { sendMessengerText } from '../services/messenger.service.js';
 import { sendInstagramText } from '../services/instagram.service.js';
 import { summarizeConversation } from '../services/conversationSummary.service.js';
+import { maybeEmailWebVisitor } from '../services/webVisitor.service.js';
 import { computeServiceWindow } from '../utils/whatsappWindow.js';
 import { toCsv } from '../utils/csv.js';
 import { recordSuggestion, lastCustomerMessage, dropPending } from '../services/learning.service.js';
@@ -242,6 +246,13 @@ export const replyAsAgent = asyncHandler(async (req, res) => {
     }
   }
 
+  // Chat del sitio web: si el visitante ya cerró la página, se le avisa por
+  // correo (si dejó uno). Si sigue ahí, la ve en el chat por el sondeo.
+  let emailed = false;
+  if (chat.channel === 'web') {
+    emailed = await maybeEmailWebVisitor({ chat, businessId: req.businessId, text });
+  }
+
   // Se propone al dueño que el bot aprenda esta respuesta (en la bandeja y en
   // Entrenamiento). Solo si hubo una pregunta del cliente a la que responde.
   const suggestion = customerQuestion
@@ -259,6 +270,7 @@ export const replyAsAgent = asyncHandler(async (req, res) => {
     data: {
       conversation: chat,
       sendWarning,
+      emailed,
       suggestion: suggestion ? { id: suggestion._id, question: suggestion.question, answer: suggestion.answer } : null,
     },
   });
@@ -267,6 +279,8 @@ export const replyAsAgent = asyncHandler(async (req, res) => {
 export const templateSchema = z.object({
   templateName: z.string().min(1, 'Elige una plantilla').max(512),
   languageCode: z.string().min(2).max(10).optional(),
+  // Valores de las variables del cuerpo, en orden ({nombre} = nombre del cliente).
+  params: z.array(z.string().max(300)).max(10).optional().default([]),
 });
 
 /**
@@ -280,12 +294,20 @@ export const sendTemplateReply = asyncHandler(async (req, res) => {
     throw ApiError.badRequest('Las plantillas solo se envían en conversaciones de WhatsApp.');
   }
 
-  const biz = await Business.findById(req.businessId).select('whatsappPhoneNumberId');
+  const biz = await Business.findById(req.businessId).select('whatsappPhoneNumberId whatsappWabaId');
+  // Estructura real de la plantilla: cuántas variables lleva y en qué formato.
+  // Mandarla sin sus variables hace que Meta la rechace.
+  const listed = biz?.whatsappWabaId ? await listTemplates(biz.whatsappWabaId) : { templates: [] };
+  const tpl = (listed.templates || []).find(
+    (t) => t.name === req.body.templateName && (!req.body.languageCode || t.language === req.body.languageCode)
+  );
+  const values = fillPlaceholders(req.body.params, { customerName: chat.customerName });
   const result = await sendTemplate({
     phoneNumberId: biz?.whatsappPhoneNumberId,
     to: chat.customerPhone,
     templateName: req.body.templateName,
-    languageCode: req.body.languageCode || 'es_MX',
+    languageCode: req.body.languageCode || tpl?.language || 'es_MX',
+    bodyParams: tpl ? bodyParameters(tpl.vars, values, tpl.named) : [],
   });
 
   if (!result.ok) {
@@ -302,8 +324,9 @@ export const sendTemplateReply = asyncHandler(async (req, res) => {
   // Registrar en el hilo para que el agente vea que se envió.
   chat.messages.push({
     role: 'assistant',
-    content: `Plantilla enviada: ${req.body.templateName}`,
+    content: tpl?.bodyText ? renderTemplate(tpl.bodyText, tpl.vars, values) : `Plantilla enviada: ${req.body.templateName}`,
     via: 'agent',
+    template: req.body.templateName,
     timestamp: new Date(),
   });
   chat.handoffMode = 'manual';
@@ -403,4 +426,29 @@ export const rateMessage = asyncHandler(async (req, res) => {
     await dropPending({ businessId: req.businessId, question, source: 'rating' });
   }
   res.json({ success: true, data: { conversation: chat } });
+});
+
+/**
+ * GET /api/conversations/:id/files/:fileId — descarga un PDF que envió el cliente.
+ * Aislado por negocio y por conversación; se sirve como descarga (no se ejecuta
+ * en el sitio) y sin caché compartida.
+ */
+export const downloadAttachment = asyncHandler(async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.fileId) || !mongoose.isValidObjectId(req.params.id)) {
+    throw ApiError.notFound('Archivo no encontrado');
+  }
+  const att = await ChatAttachment.findOne({
+    _id: req.params.fileId,
+    chat: req.params.id,
+    business: req.businessId,
+  });
+  if (!att) throw ApiError.notFound('Archivo no encontrado (se borra junto con la conversación).');
+  res.set({
+    'Content-Type': att.mime === 'application/pdf' ? 'application/pdf' : 'application/octet-stream',
+    'Content-Length': String(att.data.length),
+    'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(att.name)}`,
+    'Cache-Control': 'private, no-store',
+    'X-Content-Type-Options': 'nosniff',
+  });
+  res.send(att.data);
 });

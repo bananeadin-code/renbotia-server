@@ -17,8 +17,16 @@ const messageSchema = new mongoose.Schema(
     // Calificación de calidad que el dueño/agente da a una respuesta del bot
     // ('up' buena / 'down' mala). Sirve para detectar respuestas a mejorar.
     rating: { type: String, enum: ['up', 'down', null], default: null },
+    // Archivos que mandó el cliente (PDF). El contenido vive en ChatAttachment;
+    // aquí solo lo necesario para mostrarlo y descargarlo desde la bandeja.
+    files: {
+      type: [{ id: mongoose.Schema.Types.ObjectId, name: String, mime: String, size: Number }],
+      default: undefined,
+    },
     // Mensaje de seguimiento automático (el cliente había dejado de responder).
     followUp: { type: Boolean, default: undefined },
+    // Nombre de la plantilla de WhatsApp con la que salió este mensaje (si aplica).
+    template: { type: String, default: undefined },
     timestamp: { type: Date, default: Date.now },
   },
   { _id: false }
@@ -78,6 +86,15 @@ const chatSimulationSchema = new mongoose.Schema(
     // Último seguimiento automático enviado. Solo se manda uno por cada silencio
     // del cliente (se vuelve a permitir cuando el cliente escribe de nuevo).
     followUpAt: { type: Date, default: null },
+    // Último seguimiento con PLANTILLA (WhatsApp, ventana de 24 h ya cerrada).
+    // Uno por silencio del cliente, igual que followUpAt.
+    templateFollowUpAt: { type: Date, default: null },
+    // Widget web: última vez que el visitante tenía el chat abierto (sondeo) y
+    // último aviso por correo de una respuesta del equipo (anti-spam).
+    webLastSeenAt: { type: Date, default: null },
+    webReplyEmailAt: { type: Date, default: null },
+    // Sitio donde está el widget (para el enlace del correo al visitante).
+    webOrigin: { type: String, default: '' },
   },
   { timestamps: true }
 );

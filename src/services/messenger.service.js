@@ -130,6 +130,26 @@ export async function getMessengerProfileName(psid, pageToken) {
 }
 
 /**
+ * Descarga un archivo adjunto de Messenger/Instagram (CDN de Meta, URL pública y
+ * temporal que viene en el webhook firmado). Devuelve los bytes; el llamador
+ * valida el tipo real (p. ej. firma %PDF-).
+ * @returns {Promise<{ ok:boolean, mime?:string, buf?:Buffer, error?:string }>}
+ */
+export async function downloadMetaFile(url, maxBytes = 5 * 1024 * 1024) {
+  if (!url) return { ok: false };
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return { ok: false };
+    const mime = (res.headers.get('content-type') || '').split(';')[0].trim();
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length > maxBytes) return { ok: false, error: 'too_large' };
+    return { ok: true, mime, buf };
+  } catch {
+    return { ok: false };
+  }
+}
+
+/**
  * Descarga una imagen que el cliente mandó por Messenger (la URL del CDN de Meta
  * es pública y temporal). Devuelve base64 para pasársela al bot. Tope de 5 MB.
  * @returns {Promise<{ ok:boolean, mime?:string, base64?:string }>}

@@ -9,7 +9,9 @@ import {
   sendMessengerImage,
   getMessengerProfileName,
   downloadMessengerImage,
+  downloadMetaFile,
 } from '../services/messenger.service.js';
+import { isPdf, pdfPageCount, safeFileName, MAX_DOC_BYTES } from '../utils/document.js';
 import { sendInstagramText, sendInstagramImage, getInstagramProfileName } from '../services/instagram.service.js';
 import { isLinkCode, tryLinkOwner, ownerEntry, handleOwnerMessage } from '../services/ownerControl.service.js';
 
@@ -33,6 +35,40 @@ function alreadyProcessed(id) {
     processedIds.delete(processedIds.values().next().value);
   }
   return false;
+}
+
+// Qué decirle al equipo en la bandeja cuando llega algo que el bot no procesa.
+const UNSUPPORTED_LABEL = {
+  audio: 'una nota de voz',
+  voice: 'una nota de voz',
+  video: 'un video',
+  location: 'una ubicación',
+  document: 'un documento',
+  file: 'un archivo',
+  contacts: 'un contacto',
+};
+// Tipos que se ignoran en silencio (no ameritan respuesta).
+const SILENT_TYPES = new Set(['reaction', 'sticker', 'system', 'unsupported', 'ephemeral', 'request_welcome']);
+const UNSUPPORTED_REPLY = 'Por ahora no puedo escuchar audios ni abrir ese tipo de archivo. ¿Me lo escribes por aquí?';
+
+/**
+ * Llegó algo que el bot no procesa (audio, video, ubicación…). Si una persona
+ * atiende la conversación (modo manual), NO se le contesta automáticamente al
+ * cliente: se deja constancia en la bandeja para el equipo. Si atiende el bot,
+ * se le pide amablemente que lo escriba. Devuelve true si debe enviarse el aviso.
+ */
+async function noteUnsupported({ business, channel, match, kind }) {
+  const chat = await ChatSimulation.findOne({ business: business._id, channel, ...match }).sort({ updatedAt: -1 });
+  if (chat && chat.handoffMode === 'manual') {
+    chat.messages.push({
+      role: 'user',
+      content: `(El cliente envió ${UNSUPPORTED_LABEL[kind] || 'un archivo'} que no se puede mostrar aquí.)`,
+      timestamp: new Date(),
+    });
+    await chat.save().catch(() => {});
+    return false;
+  }
+  return true;
 }
 
 /** GET: Meta verifica el webhook comparando verify_token y devolviendo el challenge. */
@@ -128,8 +164,34 @@ async function handleMessage({ business, phoneNumberId, msg, customerName }) {
   }
   let text = '';
   let image = null;
+  let document = null;
+  if (SILENT_TYPES.has(msg.type)) return; // reacciones, stickers, avisos del sistema
   if (msg.type === 'text') {
     text = msg.text?.body || '';
+  } else if (msg.type === 'button') {
+    // Botón de respuesta rápida de una plantilla (p. ej. el seguimiento).
+    text = msg.button?.text || msg.button?.payload || '';
+  } else if (msg.type === 'interactive') {
+    text = msg.interactive?.button_reply?.title || msg.interactive?.list_reply?.title || '';
+  } else if (msg.type === 'document' && /pdf/i.test(msg.document?.mime_type || '')) {
+    // PDF del cliente (cotización, comprobante…): el bot lo lee en Elite.
+    const media = await downloadMedia(msg.document?.id);
+    const buf = media.ok ? Buffer.from(media.base64, 'base64') : null;
+    if (!buf || !isPdf(buf) || buf.length > MAX_DOC_BYTES) {
+      await sendText({
+        phoneNumberId,
+        to: from,
+        text: 'No pude abrir ese documento (máximo 5 MB, en PDF). ¿Puedes reenviarlo o escribirme el detalle por aquí?',
+      });
+      return;
+    }
+    document = {
+      mediaType: 'application/pdf',
+      data: media.base64,
+      name: safeFileName(msg.document?.filename),
+      pages: pdfPageCount(buf),
+    };
+    text = msg.document?.caption || '';
   } else if (msg.type === 'image') {
     // El cliente mandó una imagen: la descargamos y se la pasamos al bot para que
     // la interprete (la visión solo se usa en Elite; lo decide processMessage).
@@ -146,15 +208,14 @@ async function handleMessage({ business, phoneNumberId, msg, customerName }) {
       return;
     }
   } else {
-    // Otros tipos (audio, ubicación, documento…): aviso amable. No consume tokens.
-    await sendText({
-      phoneNumberId,
-      to: from,
-      text: 'Por ahora puedo leer texto e imágenes. ¿Me lo escribes por aquí?',
-    });
+    // Otros tipos (audio, video, ubicación…): aviso amable (no consume tokens),
+    // salvo que una persona esté atendiendo: entonces solo se anota en la bandeja.
+    if (await noteUnsupported({ business, channel: 'whatsapp', match: { customerPhone: from }, kind: msg.type })) {
+      await sendText({ phoneNumberId, to: from, text: UNSUPPORTED_REPLY });
+    }
     return;
   }
-  if (!text.trim() && !image) return;
+  if (!text.trim() && !image && !document) return;
 
   // Continuar la conversación abierta de este cliente (si existe) para conservar
   // contexto y el modo de relevo (bot/manual).
@@ -170,6 +231,7 @@ async function handleMessage({ business, phoneNumberId, msg, customerName }) {
       business,
       message: text,
       image,
+      document,
       chatId: existing?._id,
       channel: 'whatsapp',
       customer: { phone: from, name: customerName },
@@ -279,11 +341,29 @@ async function handleDmMessage({ business, event, channel, pageToken }) {
 
   let text = (msg.text || '').trim();
   let image = null;
+  let document = null;
   if (!text) {
+    const fileAtt = (msg.attachments || []).find((a) => a.type === 'file' && a.payload?.url);
     // Imagen del cliente: se descarga y se pasa al bot (la visión solo se usa en
     // Elite; lo decide processMessage). Otros adjuntos (audio, stickers…): aviso.
     const att = (msg.attachments || []).find((a) => a.type === 'image' && a.payload?.url && !a.payload?.sticker_id);
-    if (att) {
+    if (!att && fileAtt) {
+      // Archivo: solo PDF (verificado por su firma, no por el nombre).
+      const file = await downloadMetaFile(fileAtt.payload.url, MAX_DOC_BYTES);
+      if (file.ok && isPdf(file.buf)) {
+        document = {
+          mediaType: 'application/pdf',
+          data: file.buf.toString('base64'),
+          name: safeFileName(fileAtt.payload?.name || fileAtt.name),
+          pages: pdfPageCount(file.buf),
+        };
+      } else if (await noteUnsupported({ business, channel, match: { customerId: senderId }, kind: 'file' })) {
+        await ch.sendText({ pageToken, recipientId: senderId, text: UNSUPPORTED_REPLY });
+        return;
+      } else {
+        return;
+      }
+    } else if (att) {
       const media = await downloadMessengerImage(att.payload.url);
       if (media.ok) {
         image = { mediaType: media.mime, data: media.base64 };
@@ -296,12 +376,11 @@ async function handleDmMessage({ business, event, channel, pageToken }) {
         return;
       }
     } else {
-      if (msg.attachments?.length) {
-        await ch.sendText({
-          pageToken,
-          recipientId: senderId,
-          text: 'Por ahora puedo leer texto e imágenes. ¿Me lo escribes por aquí?',
-        });
+      // Audio, video, ubicación… (los stickers llegan como imagen con sticker_id
+      // y se ignoran en silencio).
+      const kinds = (msg.attachments || []).map((a) => a.type).filter((t) => t !== 'image');
+      if (kinds.length && (await noteUnsupported({ business, channel, match: { customerId: senderId }, kind: kinds[0] }))) {
+        await ch.sendText({ pageToken, recipientId: senderId, text: UNSUPPORTED_REPLY });
       }
       return;
     }
@@ -331,6 +410,7 @@ async function handleDmMessage({ business, event, channel, pageToken }) {
       business,
       message: text,
       image,
+      document,
       chatId: existing?._id,
       channel,
       customer: { id: senderId, name: customerName },

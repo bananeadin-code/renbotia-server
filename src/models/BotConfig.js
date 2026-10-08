@@ -78,6 +78,19 @@ const botConfigSchema = new mongoose.Schema(
       delayHours: { type: Number, default: 4, min: 1, max: 20 },
       mode: { type: String, enum: ['ai', 'custom'], default: 'ai' },
       message: { type: String, default: '', maxlength: 500 },
+      // Seguimiento DESPUÉS de las 24 h (solo WhatsApp): Meta solo permite
+      // escribir con una plantilla aprobada. Uno por silencio del cliente.
+      template: {
+        enabled: { type: Boolean, default: false },
+        name: { type: String, default: '', maxlength: 512 },
+        language: { type: String, default: 'es_MX', maxlength: 10 },
+        // Horas de silencio antes de enviarla (mín. 24: antes de eso basta el
+        // seguimiento normal; máx. 7 días).
+        delayHours: { type: Number, default: 48, min: 24, max: 168 },
+        // Valores de las variables del cuerpo, en orden. {nombre} = cliente.
+        params: { type: [String], default: [] },
+        nameFallback: { type: String, default: 'cliente', maxlength: 40 },
+      },
     },
     // Horario de atención. botMode 'always' = el bot contesta siempre (y si está
     // cerrado lo comunica con closedMessage); 'closed_only' = el bot solo

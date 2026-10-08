@@ -715,6 +715,8 @@ export const createTemplateSchema = z.object({
   category: z.enum(['MARKETING', 'UTILITY']),
   language: z.string().min(2).max(10).optional(),
   bodyText: z.string().min(1).max(1024),
+  // Hasta 3 respuestas rápidas (máx. 25 caracteres c/u, regla de Meta).
+  buttons: z.array(z.string().trim().min(1).max(25)).max(3).optional().default([]),
 });
 
 /** POST /api/connections/whatsapp/templates — crea una plantilla (solo dueño). */
@@ -728,6 +730,7 @@ export const createWhatsappTemplate = asyncHandler(async (req, res) => {
     category: req.body.category,
     language: req.body.language || 'es_MX',
     bodyText: req.body.bodyText,
+    buttons: req.body.buttons,
   });
   if (!result.ok) {
     throw new ApiError(502, `No se pudo crear la plantilla: ${result.error}`, { code: 'TEMPLATE_CREATE_FAILED' });

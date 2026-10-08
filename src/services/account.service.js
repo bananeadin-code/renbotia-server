@@ -8,6 +8,7 @@ import { Business } from '../models/Business.js';
 import { Membership } from '../models/Membership.js';
 import { BillingProfile } from '../models/BillingProfile.js';
 import { BotConfig } from '../models/BotConfig.js';
+import { ChatAttachment } from '../models/ChatAttachment.js';
 import { ChatSimulation } from '../models/ChatSimulation.js';
 import { Invitation } from '../models/Invitation.js';
 import { LearningSuggestion } from '../models/LearningSuggestion.js';
@@ -36,6 +37,7 @@ const BUSINESS_OWNED_MODELS = [
   AuditLog,
   BillingProfile,
   BotConfig,
+  ChatAttachment, // PDFs que enviaron los clientes
   ChatSimulation, // historial de conversaciones (bot y manual)
   Invitation,
   LearningSuggestion, // "Aprende de ti" (contiene preguntas de clientes)

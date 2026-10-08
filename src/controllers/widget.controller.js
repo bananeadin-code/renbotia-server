@@ -11,6 +11,7 @@ import { processMessage } from '../services/simulator.service.js';
 import { logAudit } from '../services/audit.service.js';
 import { logger } from '../utils/logger.js';
 import { env } from '../config/env.js';
+import { isPdf, pdfPageCount, safeFileName, MAX_DOC_BYTES } from '../utils/document.js';
 
 /**
  * Widget web: chat del bot incrustable en el sitio del negocio (Pro/Elite).
@@ -30,6 +31,10 @@ const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 // Tope de mensajes por sesión en 24 h: corta el abuso que vaciaría los créditos
 // del negocio sin molestar a un visitante real.
 const SESSION_DAILY_CAP = 60;
+// Archivos (foto o PDF) por sesión en 24 h: leerlos cuesta más créditos.
+const SESSION_FILE_CAP = 10;
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024; // límite práctico de la visión de la IA
+const IMAGE_MIMES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
 const newKey = () => crypto.randomBytes(15).toString('base64url'); // 20 chars
 
@@ -195,7 +200,10 @@ export const publicConfig = asyncHandler(async (req, res) => {
   // no está en la lista, el botón ni se dibuja. `host` lo manda el iframe.
   const host = hostFromOrigin(req.get('origin')) || String(req.query.host || '');
   if (!hostAllowed(business, host)) throw notAvailable();
-  const bot = await BotConfig.findOne({ business: business._id }).select('botName').lean();
+  const [bot, planKey] = await Promise.all([
+    BotConfig.findOne({ business: business._id }).select('botName').lean(),
+    getPlanKey(business._id),
+  ]);
   const w = business.widget;
   res.set('Cache-Control', 'public, max-age=60');
   res.set('Vary', 'Origin');
@@ -213,6 +221,8 @@ export const publicConfig = asyncHandler(async (req, res) => {
       requireContact: Boolean(w.requireContact),
       hideOnMobile: Boolean(w.hideOnMobile),
       buttonText: w.buttonText || '',
+      // El visitante puede adjuntar foto o PDF solo si el plan lee archivos (Elite).
+      allowFiles: Boolean(PLAN_LIMITS[planKey]?.visionInput),
     },
   });
 });
@@ -227,7 +237,8 @@ function publicMessages(chat, after = 0) {
   const from = Number.isInteger(after) && after > 0 && after <= all.length ? after : 0;
   return all.slice(from).map((m) => ({
     role: m.role,
-    content: m.content === '(imagen del cliente)' ? '' : m.content,
+    content: m.content === '(imagen del cliente)' || /^\(documento del cliente: .*\)$/.test(m.content) ? '' : m.content,
+    files: (m.files || []).map((f) => ({ name: f.name })),
     images: (m.images || []).filter((i) => /^https?:|^data:image\//.test(i.url || '')).map((i) => ({ label: i.label, url: i.url })),
     via: m.via,
     at: m.timestamp,
@@ -243,7 +254,17 @@ const PHONE_RE = /^\+?[\d\s().-]{7,20}$/;
 
 export const widgetMessageSchema = z.object({
   sessionId: z.string().regex(SESSION_RE, 'Sesión no válida'),
-  message: z.string().trim().min(1, 'Escribe un mensaje').max(1000),
+  message: z.string().trim().max(1000).optional().default(''),
+  // Foto o PDF del visitante (Elite). base64 sin prefijo data:. El tamaño real se
+  // valida al decodificar; aquí solo se acota el texto (~5 MB en base64).
+  file: z
+    .object({
+      kind: z.enum(['image', 'pdf']),
+      mediaType: z.string().max(60),
+      data: z.string().max(7_000_000).regex(/^[A-Za-z0-9+/=]+$/, 'Archivo no válido'),
+      name: z.string().max(200).optional().default(''),
+    })
+    .optional(),
   after: z.number().int().min(0).optional().default(0),
   // Sitio donde está incrustado el chat (lo manda el iframe) para "dominios permitidos".
   host: z.string().max(253).optional().default(''),
@@ -258,14 +279,47 @@ export const widgetMessageSchema = z.object({
         .refine((v) => EMAIL_RE.test(v) || PHONE_RE.test(v), 'Escribe un correo o un número de WhatsApp válido'),
     })
     .optional(),
-});
+}).refine((d) => d.message.length > 0 || d.file, { message: 'Escribe un mensaje', path: ['message'] });
+
+// Firma real del archivo (no basta con el mime que declara el navegador).
+function imageMagicOk(buf, mime) {
+  const hex = buf.subarray(0, 12).toString('hex');
+  if (mime === 'image/jpeg') return hex.startsWith('ffd8ff');
+  if (mime === 'image/png') return hex.startsWith('89504e470d0a1a0a');
+  if (mime === 'image/gif') return hex.startsWith('47494638');
+  if (mime === 'image/webp') return hex.startsWith('52494646') && buf.subarray(8, 12).toString('latin1') === 'WEBP';
+  return false;
+}
+
+/** Valida el archivo del visitante y lo convierte al formato de processMessage. */
+async function parseVisitorFile(business, file) {
+  if (!file) return {};
+  const planKey = await getPlanKey(business._id);
+  if (!PLAN_LIMITS[planKey]?.visionInput) {
+    throw new ApiError(403, 'Este chat no acepta archivos.', { code: 'FILES_NOT_ALLOWED' });
+  }
+  const buf = Buffer.from(file.data, 'base64');
+  if (file.kind === 'image') {
+    if (!IMAGE_MIMES.includes(file.mediaType) || !imageMagicOk(buf, file.mediaType)) {
+      throw ApiError.badRequest('La imagen no es válida (usa JPG, PNG, WEBP o GIF).');
+    }
+    if (buf.length > MAX_IMAGE_BYTES) throw ApiError.badRequest('La imagen pesa demasiado (máximo 4 MB).');
+    return { image: { mediaType: file.mediaType, data: file.data } };
+  }
+  if (!isPdf(buf)) throw ApiError.badRequest('Solo se aceptan documentos PDF.');
+  if (buf.length > MAX_DOC_BYTES) throw ApiError.badRequest('El PDF pesa demasiado (máximo 5 MB).');
+  return {
+    document: { mediaType: 'application/pdf', data: file.data, name: safeFileName(file.name), pages: pdfPageCount(buf) },
+  };
+}
 
 /** POST /api/widget/public/:key/message — el visitante escribe; responde el bot. */
 export const publicMessage = asyncHandler(async (req, res) => {
   const business = await resolveWidget(req.params.key);
   if (!business) throw notAvailable();
-  const { sessionId, message, after, host, contact } = req.body;
+  const { sessionId, message, after, host, contact, file } = req.body;
   if (!hostAllowed(business, host)) throw notAvailable();
+  const { image, document } = await parseVisitorFile(business, file);
 
   const existing = await findSessionChat(business._id, sessionId);
   // Captura de prospectos: la PRIMERA vez se piden nombre y contacto.
@@ -278,6 +332,14 @@ export const publicMessage = asyncHandler(async (req, res) => {
     if (recent >= SESSION_DAILY_CAP) {
       throw new ApiError(429, 'Alcanzaste el límite de mensajes por hoy. Escríbenos más tarde.', { code: 'SESSION_CAP' });
     }
+    if (file) {
+      const files = existing.messages.filter(
+        (m) => m.role === 'user' && new Date(m.timestamp).getTime() > since && (m.images?.length || m.files?.length)
+      ).length;
+      if (files >= SESSION_FILE_CAP) {
+        throw new ApiError(429, 'Alcanzaste el límite de archivos por hoy. Escríbenos tu duda por aquí.', { code: 'FILE_CAP' });
+      }
+    }
   }
 
   try {
@@ -285,6 +347,8 @@ export const publicMessage = asyncHandler(async (req, res) => {
       businessId: business._id,
       business,
       message,
+      image,
+      document,
       chatId: existing?._id,
       channel: 'web',
       customer: { id: sessionId, name: contact?.name || '' },
@@ -292,11 +356,23 @@ export const publicMessage = asyncHandler(async (req, res) => {
     });
     // Degradado (IA caída): no se persistió nada → el iframe muestra solo `reply`.
     const chat = result.chatId ? await ChatSimulation.findById(result.chatId) : null;
-    if (chat && contact && !chat.customerContact) {
-      chat.customerContact = contact.value;
-      if (!chat.customerName) chat.customerName = contact.name;
-      if (!chat.title || chat.title === message.slice(0, 40)) chat.title = contact.name;
-      await chat.save();
+    if (chat) {
+      let dirty = false;
+      if (contact && !chat.customerContact) {
+        chat.customerContact = contact.value;
+        if (!chat.customerName) chat.customerName = contact.name;
+        if (!chat.title || chat.title === message.slice(0, 40)) chat.title = contact.name;
+        dirty = true;
+      }
+      // Sitio donde está el chat (para el enlace del aviso por correo).
+      const site = normalizeDomain(host);
+      if (site && !OWN_HOSTS.includes(site) && chat.webOrigin !== site) {
+        chat.webOrigin = site;
+        dirty = true;
+      }
+      chat.webLastSeenAt = new Date();
+      if (dirty) await chat.save();
+      else await ChatSimulation.updateOne({ _id: chat._id }, { $set: { webLastSeenAt: new Date() } }, { timestamps: false });
     }
     res.json({
       success: true,
@@ -334,6 +410,11 @@ export const publicThread = asyncHandler(async (req, res) => {
   if (!SESSION_RE.test(sessionId)) throw ApiError.badRequest('Sesión no válida');
   const after = Number.parseInt(req.query.after, 10) || 0;
   const chat = await findSessionChat(business._id, sessionId);
+  // El visitante sigue con el chat abierto: si el equipo responde, lo verá aquí
+  // (no hace falta avisarle por correo). Sin tocar updatedAt (orden de la bandeja).
+  if (chat && (!chat.webLastSeenAt || Date.now() - chat.webLastSeenAt.getTime() > 30_000)) {
+    await ChatSimulation.updateOne({ _id: chat._id }, { $set: { webLastSeenAt: new Date() } }, { timestamps: false });
+  }
   res.json({
     success: true,
     data: {

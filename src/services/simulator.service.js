@@ -1,4 +1,6 @@
 import { Subscription } from '../models/Subscription.js';
+import { ChatAttachment } from '../models/ChatAttachment.js';
+import { MAX_DOC_PAGES } from '../utils/document.js';
 import { BotConfig } from '../models/BotConfig.js';
 import { ChatSimulation } from '../models/ChatSimulation.js';
 import { UsageLog } from '../models/UsageLog.js';
@@ -53,6 +55,7 @@ export async function processMessage({
   business,
   message,
   image = null, // { mediaType, data(base64) } cuando el cliente envía una imagen
+  document = null, // { mediaType:'application/pdf', data(base64), name, pages } si envía un PDF
   chatId,
   channel = 'simulator',
   customer = null, // { phone, name } cuando viene de WhatsApp real
@@ -60,7 +63,9 @@ export async function processMessage({
   userId = null, // quién del equipo usa el simulador (control de uso)
 }) {
   // Texto efectivo para historial/título: si es solo imagen, un marcador legible.
-  const userText = (message || '').trim() || (image ? '(imagen del cliente)' : '');
+  const userText =
+    (message || '').trim() ||
+    (image ? '(imagen del cliente)' : document ? `(documento del cliente: ${document.name || 'PDF'})` : '');
   // Imagen entrante guardada en el mensaje (para VERLA en la bandeja). No se
   // reenvía en el historial a Claude (solo va en el turno actual, ver más abajo).
   const inboundImages = image
@@ -123,13 +128,28 @@ export async function processMessage({
     });
   }
 
+  // PDF del cliente: se guarda aparte (ChatAttachment) para verlo en la bandeja;
+  // en el mensaje solo va la referencia.
+  let inboundFiles;
+  if (document?.data) {
+    const att = await ChatAttachment.create({
+      business: businessId,
+      chat: chat._id,
+      name: document.name || 'documento.pdf',
+      mime: document.mediaType || 'application/pdf',
+      size: Buffer.byteLength(document.data, 'base64'),
+      data: Buffer.from(document.data, 'base64'),
+    });
+    inboundFiles = [{ id: att._id, name: att.name, mime: att.mime, size: att.size }];
+  }
+
   // Relevo humano: si una persona tomó el control (modo manual), si el canal está
   // en pausa o si es horario en que atiende el equipo (modo "solo fuera de
   // horario"), el bot NO responde. Se guarda el mensaje del cliente y la
   // respuesta la dará una persona desde la bandeja. No consume tokens ni IA.
   const availability = botAvailability({ business, schedule: safeConfig.schedule, channel, source });
   if (chat.handoffMode === 'manual' || !availability.reply) {
-    chat.messages.push({ role: 'user', content: userText, images: inboundImages, timestamp: new Date() });
+    chat.messages.push({ role: 'user', content: userText, images: inboundImages, files: inboundFiles, timestamp: new Date() });
     await chat.save();
     return {
       reply: null,
@@ -164,22 +184,42 @@ export async function processMessage({
     role: m.role,
     content: m.content,
   }));
-  // Si el cliente mandó una imagen y el plan es Elite, el mensaje actual va como
-  // contenido multimodal (texto + imagen) para que Claude la INTERPRETE con visión.
-  // La imagen solo se manda en ESTE turno; en el historial se guarda solo texto
-  // (no reenviamos el base64 cada vez, sería caro).
-  const currentContent =
-    isElite && image
-      ? [
-          {
-            type: 'text',
-            text: (message || '').trim()
-              ? message
-              : 'El cliente envió esta imagen. Interprétala y responde según la información del negocio.',
-          },
-          { type: 'image', source: { type: 'base64', media_type: image.mediaType, data: image.data } },
-        ]
-      : userText;
+  // Archivos del cliente (imagen o PDF). En Elite van como contenido multimodal
+  // para que Claude los INTERPRETE (visión y lectura de PDF), solo en ESTE turno:
+  // en el historial queda solo texto (reenviar el archivo cada vez sería caro).
+  // En Free/Pro el bot no los ve, y se le dice para que pida el dato por escrito
+  // en vez de contestar a ciegas.
+  let currentContent = userText;
+  if (image || document) {
+    const typed = (message || '').trim();
+    if (isElite) {
+      const blocks = [];
+      let note = typed;
+      if (image) {
+        blocks.push({ type: 'image', source: { type: 'base64', media_type: image.mediaType, data: image.data } });
+      }
+      if (document) {
+        if ((document.pages || 0) > MAX_DOC_PAGES) {
+          note = `${typed}\n(El cliente envió el PDF "${document.name || 'documento'}" de ${document.pages} páginas: es demasiado largo para revisarlo completo. Pídele que te diga qué parte o dato necesita.)`.trim();
+        } else {
+          blocks.push({
+            type: 'document',
+            source: { type: 'base64', media_type: 'application/pdf', data: document.data },
+            title: String(document.name || 'Documento del cliente').slice(0, 200),
+          });
+        }
+      }
+      if (!note) {
+        note = image
+          ? 'El cliente envió esta imagen. Interprétala y responde según la información del negocio.'
+          : 'El cliente envió este documento. Revísalo y responde según la información del negocio.';
+      }
+      currentContent = [...blocks, { type: 'text', text: note }];
+    } else {
+      const what = image ? 'una imagen' : `un documento PDF ("${document.name || 'documento'}")`;
+      currentContent = `${typed ? `${typed}\n` : ''}(El cliente envió ${what}, pero en este plan no puedes ver archivos. Pídele con amabilidad que te escriba lo que necesita.)`;
+    }
+  }
   const claudeMessages = [...history, { role: 'user', content: currentContent }];
 
   // 6) Herramientas disponibles: gestión (citas/pedidos…), imágenes del bot, la
@@ -284,7 +324,7 @@ export async function processMessage({
   // 8) Persistir mensajes en la conversación
   const now = new Date();
   const promptTokens = inputTokens + cacheReadTokens + cacheCreationTokens;
-  chat.messages.push({ role: 'user', content: userText, images: inboundImages, tokens: promptTokens, timestamp: now });
+  chat.messages.push({ role: 'user', content: userText, images: inboundImages, files: inboundFiles, tokens: promptTokens, timestamp: now });
   chat.messages.push({
     role: 'assistant',
     content: text,

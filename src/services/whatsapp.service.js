@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { summarizeTemplate, templateVars } from '../utils/waTemplate.js';
 import { env, isProd } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 import { toWhatsAppNumber } from '../utils/phone.js';
@@ -179,6 +180,8 @@ export function isBillingError(err) {
  * @returns {Promise<{ ok: boolean, id?: string, error?: string, code?: number, billing?: boolean }>}
  */
 export async function sendTemplate({ phoneNumberId, to, templateName, languageCode = 'es_MX', bodyParams = [] }) {
+  // bodyParams: textos en orden ({{1}}, {{2}}…) u objetos ya armados
+  // ({ type:'text', text, parameter_name? }) para variables con nombre.
   const id = phoneNumberId || env.whatsapp.phoneNumberId;
   if (!isConfigured() || !id) {
     logger.warn('WhatsApp: plantilla omitida (sin token o sin phoneNumberId).');
@@ -188,7 +191,12 @@ export async function sendTemplate({ phoneNumberId, to, templateName, languageCo
   const recipient = toWhatsAppNumber(to);
   const url = `${GRAPH}/${env.whatsapp.apiVersion}/${id}/messages`;
   const components = bodyParams.length
-    ? [{ type: 'body', parameters: bodyParams.map((t) => ({ type: 'text', text: String(t) })) }]
+    ? [
+        {
+          type: 'body',
+          parameters: bodyParams.map((t) => (t && typeof t === 'object' ? t : { type: 'text', text: String(t) })),
+        },
+      ]
     : undefined;
   const body = {
     messaging_product: 'whatsapp',
@@ -227,7 +235,7 @@ export async function sendTemplate({ phoneNumberId, to, templateName, languageCo
  */
 export async function listTemplates(wabaId) {
   if (!isConfigured() || !wabaId) return { ok: false, error: 'not_configured', templates: [] };
-  const url = `${GRAPH}/${env.whatsapp.apiVersion}/${wabaId}/message_templates?fields=name,status,language,category&limit=100`;
+  const url = `${GRAPH}/${env.whatsapp.apiVersion}/${wabaId}/message_templates?fields=name,status,language,category,components,parameter_format&limit=100`;
   try {
     const res = await fetch(url, { headers: { Authorization: `Bearer ${env.whatsapp.token}` } });
     const data = await res.json().catch(() => ({}));
@@ -235,12 +243,7 @@ export async function listTemplates(wabaId) {
       logger.error(`WhatsApp: fallo al listar plantillas (${res.status}): ${JSON.stringify(data?.error || data)}`);
       return { ok: false, error: data?.error?.message || `HTTP ${res.status}`, templates: [] };
     }
-    const templates = (data.data || []).map((t) => ({
-      name: t.name,
-      language: t.language,
-      status: t.status,
-      category: t.category,
-    }));
+    const templates = (data.data || []).map(summarizeTemplate);
     return { ok: true, templates };
   } catch (err) {
     logger.error(`WhatsApp: error de red al listar plantillas: ${err.message}`);
@@ -366,15 +369,24 @@ export async function setBusinessProfilePhoto(phoneNumberId, dataUri) {
  * revisa: queda en estado PENDING hasta aprobarse.
  * @returns {Promise<{ ok: boolean, id?: string, status?: string, error?: string }>}
  */
-export async function createTemplate(wabaId, { name, category, language = 'es_MX', bodyText }) {
+export async function createTemplate(wabaId, { name, category, language = 'es_MX', bodyText, buttons = [] }) {
   if (!isConfigured() || !wabaId) return { ok: false, error: 'not_configured' };
   const url = `${GRAPH}/${env.whatsapp.apiVersion}/${wabaId}/message_templates`;
-  const body = {
-    name,
-    category,
-    language,
-    components: [{ type: 'BODY', text: bodyText }],
-  };
+  // Meta exige un EJEMPLO por cada variable del cuerpo; sin él rechaza la plantilla.
+  const vars = templateVars(bodyText);
+  const named = vars.some((v) => !/^\d+$/.test(v));
+  const sample = (i) => (i === 0 ? 'María' : `ejemplo ${i + 1}`);
+  const bodyComp = { type: 'BODY', text: bodyText };
+  if (vars.length) {
+    bodyComp.example = named
+      ? { body_text_named_params: vars.map((v, i) => ({ param_name: v, example: sample(i) })) }
+      : { body_text: [vars.map((_, i) => sample(i))] };
+  }
+  const components = [bodyComp];
+  // Respuestas rápidas (p. ej. "Sí, me interesa"): el cliente responde con un toque.
+  const quick = buttons.map((b) => String(b).trim()).filter(Boolean).slice(0, 3);
+  if (quick.length) components.push({ type: 'BUTTONS', buttons: quick.map((text) => ({ type: 'QUICK_REPLY', text: text.slice(0, 25) })) });
+  const body = { name, category, language, components, ...(named ? { parameter_format: 'NAMED' } : {}) };
   try {
     const res = await fetch(url, {
       method: 'POST',

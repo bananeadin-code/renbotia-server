@@ -77,6 +77,20 @@ export const updateBotConfigSchema = z.object({
       delayHours: z.number().int().min(1).max(20),
       mode: z.enum(['ai', 'custom']),
       message: z.string().max(500).optional().default(''),
+      template: z
+        .object({
+          enabled: z.boolean(),
+          name: z.string().max(512).optional().default(''),
+          language: z.string().min(2).max(10).optional().default('es_MX'),
+          delayHours: z.number().int().min(24).max(168),
+          params: z.array(z.string().trim().max(300)).max(10).optional().default([]),
+          nameFallback: z.string().trim().max(40).optional().default('cliente'),
+        })
+        .refine((t) => !t.enabled || t.name.trim().length > 0, {
+          message: 'Elige la plantilla aprobada para el seguimiento.',
+          path: ['name'],
+        })
+        .optional(),
     })
     .refine((f) => !f.enabled || f.mode !== 'custom' || f.message.trim().length >= 5, {
       message: 'Escribe el mensaje de seguimiento (mínimo 5 caracteres).',
@@ -137,6 +151,13 @@ export const updateBotConfig = asyncHandler(async (req, res) => {
       code: 'CONTENT_REJECTED',
       issues,
     });
+  }
+
+  // Seguimiento: se guarda por campo, para que actualizar una parte (p. ej. el
+  // seguimiento normal) no borre la otra (la plantilla) si no viene en la petición.
+  if (safe.followUp) {
+    for (const [k, v] of Object.entries(safe.followUp)) safe[`followUp.${k}`] = v;
+    delete safe.followUp;
   }
 
   const config = await BotConfig.findOneAndUpdate(
