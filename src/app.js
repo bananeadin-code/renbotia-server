@@ -1,3 +1,4 @@
+import net from 'node:net';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -19,6 +20,20 @@ export function createApp() {
 
   // Confía en el proxy (necesario para rate-limit detrás de reverse proxy)
   app.set('trust proxy', 1);
+
+  // IP real del cliente. Render está detrás de Cloudflare: con 'trust proxy'
+  // req.ip queda como la IP del nodo de Cloudflare (cambia en cada petición) y
+  // los límites por IP no sirven. Cloudflare SIEMPRE reescribe CF-Connecting-IP
+  // con la IP real del visitante (el cliente no puede falsearla), así que se usa
+  // esa para todo lo que lee req.ip (rate limits, registro de login).
+  // TRUST_CF_CONNECTING_IP=false lo desactiva si algún día no hay Cloudflare.
+  if (process.env.TRUST_CF_CONNECTING_IP !== 'false') {
+    app.use((req, _res, next) => {
+      const cf = req.get('cf-connecting-ip');
+      if (cf && net.isIP(cf)) Object.defineProperty(req, 'ip', { value: cf, configurable: true });
+      next();
+    });
+  }
 
   // Cabeceras de seguridad HTTP. Este server sólo responde JSON (el HTML lo
   // sirve Vercel, que lleva su propio CSP), así que aquí desactivamos el CSP y
