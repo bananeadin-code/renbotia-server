@@ -129,6 +129,10 @@ export const demoDailyBudget = dailyBudget(
   Number(process.env.DEMO_DAILY_MAX) || 500,
   'La demo está muy solicitada hoy. Crea tu cuenta gratis para probar tu propio bot.'
 );
+export const siteAssistantDailyBudget = dailyBudget(
+  Number(process.env.SITE_ASSISTANT_DAILY_MAX) || 500,
+  'El asistente está muy solicitado hoy. Escríbenos desde Contacto y te respondemos.'
+);
 export const demoProfileDailyBudget = dailyBudget(
   Number(process.env.DEMO_PROFILE_DAILY_MAX) || 50,
   'La demo está muy solicitada hoy. Crea tu cuenta gratis para probar tu propio bot.'

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { validate } from '../middleware/validate.middleware.js';
-import { demoLimiter } from '../middleware/rateLimit.middleware.js';
+import { demoLimiter, siteAssistantDailyBudget } from '../middleware/rateLimit.middleware.js';
 import {
   getPublicConfig,
   siteAssistantMessage,
@@ -14,6 +14,6 @@ import {
 const router = Router();
 
 router.get('/config', getPublicConfig);
-router.post('/message', demoLimiter, validate(messageSchema), siteAssistantMessage);
+router.post('/message', demoLimiter, validate(messageSchema), siteAssistantDailyBudget, siteAssistantMessage);
 
 export default router;

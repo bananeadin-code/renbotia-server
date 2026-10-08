@@ -3,6 +3,7 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { SiteAssistant } from '../models/SiteAssistant.js';
 import { buildSystemPrompt } from '../services/promptBuilder.service.js';
 import { generateReply } from '../services/claude.service.js';
+import { MODEL_BY_PLAN } from '../config/constants.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -77,7 +78,8 @@ export const siteAssistantMessage = asyncHandler(async (req, res) => {
   const messages = [...history.slice(-8), { role: 'user', content: message }];
 
   try {
-    const { text } = await generateReply({ system, messages });
+    // Asistente del sitio (preguntas sobre RenBotIA): Haiku basta y cuesta mucho menos.
+    const { text } = await generateReply({ system, messages, model: MODEL_BY_PLAN.free });
     res.json({ success: true, data: { reply: text } });
   } catch (err) {
     if (err.statusCode === 503) throw err; // problema de configuración (API key): que lo vea el admin

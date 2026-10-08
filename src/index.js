@@ -8,6 +8,7 @@ import { startBackupScheduler } from './services/backup.service.js';
 import { startWeeklyReportScheduler } from './services/weeklyReport.service.js';
 import { startRenewalScheduler } from './services/renewal.service.js';
 import { encryptLegacySecrets } from './services/encryptSecrets.service.js';
+import { syncPlans } from './services/syncPlans.service.js';
 
 /**
  * Punto de entrada: conecta a la base de datos y arranca el servidor HTTP.
@@ -15,6 +16,9 @@ import { encryptLegacySecrets } from './services/encryptSecrets.service.js';
 async function start() {
   installProcessAlerts();
   await connectDB();
+
+  // Precios y beneficios de los planes = los del código (los que se cobran).
+  await syncPlans().catch((err) => logger.error(`Sincronizar planes: ${err.message}`));
 
   // Cifra tokens de Página guardados en claro (idempotente, no bloquea el arranque).
   encryptLegacySecrets().catch((err) => logger.error(`Cifrado de tokens: ${err.message}`));

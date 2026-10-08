@@ -355,7 +355,7 @@ export async function processMessage({
 
   // Aprende de ti: si el bot pidió ayuda humana, lo que preguntó el cliente
   // queda como pendiente por enseñar (canales reales; el simulador es prueba).
-  if (escalation.flagged && source !== 'simulator' && !image) {
+  if (escalation.flagged && source !== 'simulator' && !image && !document) {
     void recordSuggestion({ businessId, chatId: chat._id, source: 'escalation', question: userText });
   }
 
