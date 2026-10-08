@@ -258,12 +258,12 @@ export async function getPageInfo(pageId, pageToken) {
  * Suscribe la app a los eventos de mensajería de la Página (necesario para recibir
  * los mensajes en el webhook). Se llama al conectar la Página.
  */
-export async function subscribePageToApp(pageId, pageToken) {
+export async function subscribePageToApp(pageId, pageToken, fields = 'messages,messaging_postbacks') {
   try {
     const res = await fetch(`${GRAPH()}/${pageId}/subscribed_apps?access_token=${encodeURIComponent(pageToken)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ subscribed_fields: 'messages,messaging_postbacks' }),
+      body: JSON.stringify({ subscribed_fields: fields }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -273,6 +273,22 @@ export async function subscribePageToApp(pageId, pageToken) {
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err.message };
+  }
+}
+
+/**
+ * ¿Nuestra app ya está instalada en la Página? (p. ej. porque antes se conectó
+ * Messenger con esa misma Página). Basta para recibir los mensajes de Instagram.
+ */
+export async function pageHasApp(pageId, pageToken) {
+  try {
+    const res = await fetch(`${GRAPH()}/${pageId}/subscribed_apps?access_token=${encodeURIComponent(pageToken)}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return false;
+    const appId = env.whatsapp.appId;
+    return (data.data || []).some((a) => !appId || String(a.id) === String(appId));
+  } catch {
+    return false;
   }
 }
 

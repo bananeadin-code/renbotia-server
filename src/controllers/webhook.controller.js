@@ -322,14 +322,26 @@ async function processInstagramInbound(payload) {
   }
 }
 
+// Texto de una pregunta inicial tocada: Meta manda su título; si no viniera, se
+// recupera del payload (ICEBREAKER_n) con las preguntas guardadas del canal.
+function postbackText(business, channel, postback) {
+  if (!postback) return '';
+  if (postback.title) return postback.title;
+  const n = /^ICEBREAKER_(\d+)$/.exec(postback.payload || '')?.[1];
+  const list = business.channelSettings?.[channel]?.iceBreakers || [];
+  return n ? list[Number(n) - 1] || '' : '';
+}
+
 async function handleDmMessage({ business, event, channel, pageToken }) {
   const ch = DM_CHANNELS[channel];
+  const pbText = postbackText(business, channel, event.postback);
+  if (event.postback) logger.info(`${ch.label}: pregunta inicial tocada ("${pbText || event.postback.payload || '?'}").`);
   // Al tocar una pregunta inicial (ice breaker) llega un postback con su texto:
   // se atiende como si el cliente la hubiera escrito.
   const msg =
     event.message ||
-    (event.postback?.title
-      ? { mid: event.postback.mid || `pb_${event.sender?.id}_${event.timestamp}`, text: event.postback.title }
+    (pbText
+      ? { mid: event.postback.mid || `pb_${event.sender?.id}_${event.timestamp}`, text: pbText }
       : null);
   // Ignorar ecos (lo que envía la propia cuenta), mensajes borrados y eventos sin
   // mensaje (entregas, lecturas, reacciones, postbacks). Dedupe por mid.

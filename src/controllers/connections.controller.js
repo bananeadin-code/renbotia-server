@@ -25,6 +25,7 @@ import {
   toLongLivedUserToken,
   listUserPages,
   subscribePageToApp,
+  pageHasApp,
   verifyUserToken,
   syncMessengerProfile,
 } from '../services/messenger.service.js';
@@ -427,12 +428,22 @@ async function linkInstagram(req, acc) {
       code: 'IG_IN_USE',
     });
   }
-  // Instalar la app en la Página ligada habilita los webhooks de mensajería de IG.
-  const sub = await subscribePageToApp(acc.pageId, acc.pageToken);
+  // Los mensajes de Instagram llegan si nuestra app está INSTALADA en la Página
+  // ligada. Suscribir los campos de Messenger (messages) exige el permiso de
+  // Messenger (pages_messaging), que el login de Instagram no pide: por eso antes
+  // solo funcionaba si ya se había conectado Messenger con esa Página. Ahora:
+  //  1) intenta con los campos de mensajería (si el token los tiene),
+  //  2) si no, instala la app con un campo que solo pide pages_manage_metadata,
+  //  3) si la app ya estaba instalada (p. ej. por Messenger), sigue adelante.
+  let sub = await subscribePageToApp(acc.pageId, acc.pageToken);
+  if (!sub.ok) sub = await subscribePageToApp(acc.pageId, acc.pageToken, 'feed');
+  if (!sub.ok && (await pageHasApp(acc.pageId, acc.pageToken))) sub = { ok: true };
   if (!sub.ok) {
-    throw new ApiError(502, 'No se pudo activar la recepción de mensajes de tu Instagram. Intenta de nuevo.', {
-      code: 'SUBSCRIBE_FAILED',
-    });
+    throw new ApiError(
+      502,
+      `Meta no nos dejó activar los mensajes de tu Instagram${sub.error ? ` (${sub.error})` : ''}. Vuelve a conectar y, en la ventana de Facebook, deja marcados todos los permisos y la Página ligada a tu Instagram.`,
+      { code: 'SUBSCRIBE_FAILED' }
+    );
   }
   const business = await Business.findById(req.businessId);
   if (!business) throw new ApiError(404, 'Negocio no encontrado');
