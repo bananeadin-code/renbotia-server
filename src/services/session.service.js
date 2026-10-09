@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { resolveAccess } from '../config/access.js';
 import { Session } from '../models/Session.js';
 import { User } from '../models/User.js';
 import { Business } from '../models/Business.js';
@@ -353,13 +354,13 @@ export async function revokeMemberSessions(businessId, { userId = null, onlyWith
 export async function listContexts(userId) {
   const [owned, memberships] = await Promise.all([
     Business.findOne({ owner: userId }).select('name photo').lean(),
-    Membership.find({ user: userId, role: { $ne: 'owner' } }).select('business').lean(),
+    Membership.find({ user: userId, role: { $ne: 'owner' } }).select('business role roleKey access permissions').lean(),
   ]);
   const out = [];
   if (owned) out.push({ kind: 'owner', businessId: String(owned._id), name: owned.name, photo: owned.photo || '', requireTeam2fa: false });
   const ids = memberships.map((m) => m.business).filter((id) => !owned || String(id) !== String(owned._id));
   if (ids.length) {
-    const list = await Business.find({ _id: { $in: ids } }).select('name photo security').lean();
+    const list = await Business.find({ _id: { $in: ids } }).select('name photo security customRoles').lean();
     for (const b of list) {
       out.push({
         kind: 'member',
@@ -367,6 +368,8 @@ export async function listContexts(userId) {
         name: b.name,
         photo: b.photo || '',
         requireTeam2fa: Boolean(b.security?.requireTeam2fa),
+        // Con qué rol entra (IAM) para que lo vea antes de elegir.
+        roleName: resolveAccess(memberships.find((m) => String(m.business) === String(b._id)), b)?.roleName || '',
       });
     }
   }

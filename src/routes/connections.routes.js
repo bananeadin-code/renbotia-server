@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { requireRecentAuth } from '../middleware/stepUp.middleware.js';
 import { requireAuth } from '../middleware/auth.middleware.js';
-import { requireBusiness, requirePermission } from '../middleware/tenant.middleware.js';
+import { requireBusiness, requirePermission, requireAccess } from '../middleware/tenant.middleware.js';
 import { validate } from '../middleware/validate.middleware.js';
 import * as connections from '../controllers/connections.controller.js';
 
@@ -9,7 +9,7 @@ const router = Router();
 router.use(requireAuth, requireBusiness);
 
 // Estado y config lo puede ver cualquier miembro del negocio.
-router.get('/', connections.getConnections);
+router.get('/', requireAccess('connections', 'view'), connections.getConnections);
 
 // Conectar/desconectar y ajustar canales: dueño o colaborador con permiso de conexiones.
 router.post(
@@ -22,7 +22,7 @@ router.post(
 router.post('/whatsapp/disconnect', requirePermission('connections'), requireRecentAuth, connections.disconnectWhatsApp);
 
 // Perfil de WhatsApp Business (ver: cualquier miembro; editar: dueño).
-router.get('/whatsapp/profile', connections.getWhatsappProfile);
+router.get('/whatsapp/profile', requireAccess('connections', 'view'), connections.getWhatsappProfile);
 router.put(
   '/whatsapp/profile',
   requirePermission('connections'),
@@ -71,7 +71,7 @@ router.post(
 router.post('/instagram/disconnect', requirePermission('connections'), requireRecentAuth, connections.disconnectInstagram);
 
 // Plantillas de la WABA (ver: cualquier miembro; crear: dueño).
-router.get('/whatsapp/templates', connections.listWhatsappTemplates);
+router.get('/whatsapp/templates', requireAccess('connections', 'view'), connections.listWhatsappTemplates);
 router.post(
   '/whatsapp/templates',
   requirePermission('connections'),

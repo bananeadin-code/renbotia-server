@@ -101,6 +101,18 @@ const businessSchema = new mongoose.Schema(
         iceBreakers: { type: [String], default: [] },
       },
     },
+    // ── Roles personalizados del equipo (Fase 3) ──
+    // { name, modules: { módulo: 'none'|'view'|'edit' }, channels: 'all'|[...] }
+    customRoles: {
+      type: [
+        {
+          name: { type: String, required: true, trim: true, maxlength: 40 },
+          modules: { type: mongoose.Schema.Types.Mixed, default: {} },
+          channels: { type: mongoose.Schema.Types.Mixed, default: 'all' },
+        },
+      ],
+      default: [],
+    },
     // ── Seguridad del equipo ──
     // requireTeam2fa: los colaboradores deben verificar un segundo factor (código
     // por correo o Google) para entrar a este negocio.

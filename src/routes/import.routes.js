@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { requireBusiness, requireAccess } from '../middleware/tenant.middleware.js';
 import rateLimit from 'express-rate-limit';
 import { requireAuth } from '../middleware/auth.middleware.js';
 import { validate } from '../middleware/validate.middleware.js';
@@ -39,6 +40,12 @@ const importLimiter = rateLimit({
   },
 });
 
-router.post('/', requireAuth, resolveImportPlan, importLimiter, validate(importSchema), importTraining);
+// Dentro de un proyecto donde colabora: hace falta "entrenamiento: editar".
+const requireTrainingInProject = (req, res, next) => {
+  if (req.sessionContext?.kind !== 'member') return next();
+  return requireBusiness(req, res, (err) => (err ? next(err) : requireAccess('training', 'edit')(req, res, next)));
+};
+
+router.post('/', requireAuth, requireTrainingInProject, resolveImportPlan, importLimiter, validate(importSchema), importTraining);
 
 export default router;

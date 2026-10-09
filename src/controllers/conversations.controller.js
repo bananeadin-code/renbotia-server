@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { can, canChannel } from '../config/access.js';
 import { isBlocked, contactIdOf } from '../utils/blocklist.js';
 import { bodyParameters, renderTemplate, fillPlaceholders } from '../utils/waTemplate.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
@@ -32,16 +33,42 @@ import { CONVERSATION_RETENTION_DAYS } from '../config/constants.js';
  * del equipo en el Simulador, aparte, con quién las hizo y cuántos tokens gastó
  * (sin modo manual ni etiquetas: no son clientes).
  */
+
+/* ── IAM: qué conversaciones ve cada quien ─────────────────────────────────
+   - Las pruebas del simulador: quien tiene acceso al simulador.
+   - Las de clientes: 'conversations' (ver o editar) y SOLO sus canales
+     (p. ej. un agente de Instagram no ve WhatsApp). Fuera de su alcance, la
+     conversación "no existe" (404) para no revelar nada. */
+function realChannelFilter(req) {
+  const ch = req.access?.channels;
+  return ch === 'all' || !ch ? { $ne: 'simulator' } : { $in: ch.filter((c) => c !== 'simulator') };
+}
+
+function assertChatAccess(req, chat) {
+  const ok =
+    chat.channel === 'simulator'
+      ? can(req.access, 'simulator', 'edit')
+      : can(req.access, 'conversations', 'view') && canChannel(req.access, chat.channel);
+  if (!ok) throw ApiError.notFound('Conversación no encontrada');
+}
+
 export const listConversations = asyncHandler(async (req, res) => {
   const simulator = req.query.scope === 'simulator';
-  const filter = { business: req.businessId, channel: simulator ? 'simulator' : { $ne: 'simulator' } };
+  const canSim = can(req.access, 'simulator', 'edit');
+  if (simulator && !canSim) {
+    throw new ApiError(403, 'Tu rol no incluye el simulador.', { code: 'ACCESS_DENIED', module: 'simulator' });
+  }
+  if (!simulator && !can(req.access, 'conversations', 'view')) {
+    throw new ApiError(403, 'Tu rol no incluye las conversaciones.', { code: 'ACCESS_DENIED', module: 'conversations' });
+  }
+  const filter = { business: req.businessId, channel: simulator ? 'simulator' : realChannelFilter(req) };
   const [chats, simulatorCount] = await Promise.all([
     ChatSimulation.find(filter)
       .sort({ updatedAt: -1 })
       .limit(100)
       .populate(simulator ? { path: 'startedBy', select: 'name email' } : [])
       .lean(),
-    ChatSimulation.countDocuments({ business: req.businessId, channel: 'simulator' }),
+    canSim ? ChatSimulation.countDocuments({ business: req.businessId, channel: 'simulator' }) : 0,
   ]);
 
   // Tokens por prueba del simulador (de UsageLog; si es una prueba anterior al
@@ -106,6 +133,7 @@ export const listConversations = asyncHandler(async (req, res) => {
 export const getConversation = asyncHandler(async (req, res) => {
   const chat = await ChatSimulation.findOne({ _id: req.params.id, business: req.businessId }).lean();
   if (!chat) throw ApiError.notFound('Conversación no encontrada');
+  assertChatAccess(req, chat);
   const biz = await Business.findById(req.businessId).select('blockedContacts').lean();
   res.json({
     success: true,
@@ -129,6 +157,7 @@ export const blockContact = asyncHandler(async (req, res) => {
     .select('channel customerPhone customerId customerName')
     .lean();
   if (!chat) throw ApiError.notFound('Conversación no encontrada');
+  assertChatAccess(req, chat);
   if (chat.channel === 'simulator') throw ApiError.badRequest('Las pruebas del simulador no se bloquean.');
   const id = contactIdOf(chat);
   if (!id) throw ApiError.badRequest('No se pudo identificar al contacto.');
@@ -168,6 +197,7 @@ export const updateConversationSchema = z.object({
 export const updateConversation = asyncHandler(async (req, res) => {
   const chat = await ChatSimulation.findOne({ _id: req.params.id, business: req.businessId });
   if (!chat) throw ApiError.notFound('Conversación no encontrada');
+  assertChatAccess(req, chat);
   if (
     chat.channel === 'simulator' &&
     (req.body.handoffMode !== undefined || req.body.tags !== undefined || req.body.hotLead !== undefined)
@@ -223,6 +253,7 @@ export const replySchema = z.object({ message: z.string().min(1, 'Escribe un men
 export const replyAsAgent = asyncHandler(async (req, res) => {
   const chat = await ChatSimulation.findOne({ _id: req.params.id, business: req.businessId });
   if (!chat) throw ApiError.notFound('Conversación no encontrada');
+  assertChatAccess(req, chat);
   if (chat.channel === 'simulator') {
     throw new ApiError(400, 'Las pruebas del simulador no se responden como persona. Usa el Simulador.', {
       code: 'SIMULATOR_READONLY',
@@ -335,6 +366,7 @@ export const templateSchema = z.object({
 export const sendTemplateReply = asyncHandler(async (req, res) => {
   const chat = await ChatSimulation.findOne({ _id: req.params.id, business: req.businessId });
   if (!chat) throw ApiError.notFound('Conversación no encontrada');
+  assertChatAccess(req, chat);
   if (chat.channel !== 'whatsapp' || !chat.customerPhone) {
     throw ApiError.badRequest('Las plantillas solo se envían en conversaciones de WhatsApp.');
   }
@@ -401,13 +433,16 @@ export const listBusinessTemplates = asyncHandler(async (req, res) => {
 
 /** POST /api/conversations/:id/summary — resumen con IA + respuesta sugerida. */
 export const summarizeConv = asyncHandler(async (req, res) => {
+  const chat = await ChatSimulation.findOne({ _id: req.params.id, business: req.businessId }).select('channel').lean();
+  if (!chat) throw ApiError.notFound('Conversación no encontrada');
+  assertChatAccess(req, chat);
   const data = await summarizeConversation({ businessId: req.businessId, chatId: req.params.id });
   res.json({ success: true, data });
 });
 
 /** GET /api/conversations/export — descarga las conversaciones en CSV. */
 export const exportConversations = asyncHandler(async (req, res) => {
-  const chats = await ChatSimulation.find({ business: req.businessId })
+  const chats = await ChatSimulation.find({ business: req.businessId, channel: realChannelFilter(req) })
     .sort({ updatedAt: -1 })
     .limit(5000)
     .lean();
@@ -453,6 +488,7 @@ export const rateSchema = z.object({
 export const rateMessage = asyncHandler(async (req, res) => {
   const chat = await ChatSimulation.findOne({ _id: req.params.id, business: req.businessId });
   if (!chat) throw ApiError.notFound('Conversación no encontrada');
+  assertChatAccess(req, chat);
 
   const msg = chat.messages[req.body.index];
   if (!msg || msg.role !== 'assistant') {
@@ -482,6 +518,9 @@ export const downloadAttachment = asyncHandler(async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.fileId) || !mongoose.isValidObjectId(req.params.id)) {
     throw ApiError.notFound('Archivo no encontrado');
   }
+  const owner = await ChatSimulation.findOne({ _id: req.params.id, business: req.businessId }).select('channel').lean();
+  if (!owner) throw ApiError.notFound('Archivo no encontrado');
+  assertChatAccess(req, owner);
   const att = await ChatAttachment.findOne({
     _id: req.params.fileId,
     chat: req.params.id,

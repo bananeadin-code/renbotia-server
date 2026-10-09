@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import cors from 'cors';
 import { requireAuth } from '../middleware/auth.middleware.js';
-import { requireBusiness, requirePermission } from '../middleware/tenant.middleware.js';
+import { requireBusiness, requirePermission, requireAccess } from '../middleware/tenant.middleware.js';
 import { validate } from '../middleware/validate.middleware.js';
 import { widgetLimiter } from '../middleware/rateLimit.middleware.js';
 import * as widget from '../controllers/widget.controller.js';
@@ -19,7 +19,7 @@ router.post('/public/:key/message', widgetLimiter, validate(widget.widgetMessage
 router.get('/public/:key/messages', widget.publicThread);
 
 // ── Panel ──
-router.get('/', requireAuth, requireBusiness, widget.getWidget);
+router.get('/', requireAuth, requireBusiness, requireAccess('connections', 'view'), widget.getWidget);
 router.put(
   '/',
   requireAuth,

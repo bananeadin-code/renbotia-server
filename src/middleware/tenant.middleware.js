@@ -1,4 +1,5 @@
 import { Business } from '../models/Business.js';
+import { resolveAccess, legacyPermissionsOf, can, OWNER_ACCESS } from '../config/access.js';
 import { revokeSession } from '../services/session.service.js';
 import { Membership } from '../models/Membership.js';
 import { ApiError } from '../utils/ApiError.js';
@@ -27,10 +28,12 @@ export const requireBusiness = asyncHandler(async (req, res, next) => {
     if (business && sc.kind === 'owner' && String(business.owner) === String(req.userId)) {
       role = 'owner';
     } else if (business && sc.kind === 'member') {
-      const m = await Membership.findOne({ business: business._id, user: req.userId }).select('role permissions').lean();
+      const m = await Membership.findOne({ business: business._id, user: req.userId })
+        .select('role roleKey access permissions')
+        .lean();
       if (m && m.role !== 'owner') {
         role = m.role;
-        req.permissions = { ...DEFAULT_MEMBER_PERMISSIONS, ...(m.permissions || {}) };
+        req.access = resolveAccess(m, business);
       }
     }
     if (!role) {
@@ -41,7 +44,8 @@ export const requireBusiness = asyncHandler(async (req, res, next) => {
     req.business = business;
     req.businessId = business._id;
     req.membershipRole = role;
-    if (role === 'owner') req.permissions = Object.fromEntries(PERMISSION_KEYS.map((k) => [k, true]));
+    if (role === 'owner') req.access = OWNER_ACCESS;
+    req.permissions = legacyPermissionsOf(req.access);
     return next();
   }
 
@@ -108,13 +112,16 @@ export const requireBusiness = asyncHandler(async (req, res, next) => {
   req.business = business;
   req.businessId = business._id;
   req.membershipRole = role;
-  // Permisos efectivos: el dueño todos; un colaborador los de su membresía.
+  // Acceso efectivo (IAM): el dueño todo; un colaborador el de su rol.
   if (role === 'owner') {
-    req.permissions = Object.fromEntries(PERMISSION_KEYS.map((k) => [k, true]));
+    req.access = OWNER_ACCESS;
   } else {
-    const m = await Membership.findOne({ business: business._id, user: req.userId }).select('permissions').lean();
-    req.permissions = { ...DEFAULT_MEMBER_PERMISSIONS, ...(m?.permissions || {}) };
+    const m = await Membership.findOne({ business: business._id, user: req.userId })
+      .select('role roleKey access permissions')
+      .lean();
+    req.access = resolveAccess(m, business);
   }
+  req.permissions = legacyPermissionsOf(req.access);
   next();
 });
 
@@ -124,6 +131,40 @@ const PERMISSION_MESSAGES = {
   profile: 'No tienes permiso para cambiar los datos del negocio. Pídeselo al dueño.',
   connections: 'No tienes permiso para cambiar las conexiones. Pídeselo al dueño del negocio.',
 };
+
+const MODULE_LABEL = {
+  conversations: 'las conversaciones',
+  training: 'el entrenamiento del bot',
+  simulator: 'el simulador',
+  management: 'la gestión de trabajo',
+  analytics: 'las analíticas',
+  connections: 'las conexiones',
+  profile: 'los datos del negocio',
+  team: 'el equipo',
+  activity: 'la actividad',
+};
+
+/**
+ * Exige un nivel de acceso a un módulo (IAM). Va DESPUÉS de requireBusiness.
+ * Acepta varias opciones: pasa si cumple CUALQUIERA, p. ej.
+ *   requireAccess(['training', 'view'], ['simulator', 'edit'])
+ */
+export function requireAccess(...rules) {
+  const list = Array.isArray(rules[0]) ? rules : [[rules[0], rules[1] || 'view']];
+  return (req, res, next) => {
+    if (list.some(([m, l]) => can(req.access, m, l))) return next();
+    const [m, l] = list[0];
+    return next(
+      new ApiError(
+        403,
+        l === 'edit'
+          ? `Tu rol no te permite cambiar ${MODULE_LABEL[m] || 'esto'}. Pídeselo al dueño del negocio.`
+          : `Tu rol no incluye ${MODULE_LABEL[m] || 'esta sección'}. Pídeselo al dueño del negocio.`,
+        { code: 'ACCESS_DENIED', module: m, level: l }
+      )
+    );
+  };
+}
 
 /** Exige un permiso de colaborador (el dueño siempre pasa). Va DESPUÉS de requireBusiness. */
 export function requirePermission(key) {

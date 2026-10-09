@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { MODULES, MODULE_LEVELS, CHANNELS, PRESET_ROLES, normalizeModules, normalizeChannels, resolveAccess, can } from '../config/access.js';
 import { listMemberSessions as listMemberSessionsSvc, revokeMemberSessions } from '../services/session.service.js';
 import { z } from 'zod';
 import { asyncHandler } from '../utils/asyncHandler.js';
@@ -48,6 +49,8 @@ export const listMembers = asyncHandler(async (req, res) => {
         m.role === 'owner'
           ? Object.fromEntries(PERMISSION_KEYS.map((k) => [k, true]))
           : { ...DEFAULT_MEMBER_PERMISSIONS, ...(m.permissions || {}) },
+      // IAM: rol y acceso efectivo (módulos y canales).
+      access: resolveAccess(m, req.business),
       simulator: {
         tokens: simBy[String(m.user._id)]?.tokens || 0,
         messages: simBy[String(m.user._id)]?.messages || 0,
@@ -58,14 +61,28 @@ export const listMembers = asyncHandler(async (req, res) => {
     success: true,
     data: {
       myRole: req.membershipRole,
+      myAccess: req.access,
+      canManageTeam: can(req.access, 'team', 'edit'),
+      roles: rolesCatalog(req.business),
       members,
       security: { requireTeam2fa: Boolean(req.business?.security?.requireTeam2fa) },
-      invitations: invitations.map((i) => ({ id: i._id, email: i.email, role: i.role, expiresAt: i.expiresAt })),
+      invitations: invitations.map((i) => ({
+        id: i._id,
+        email: i.email,
+        role: i.role,
+        roleKey: i.roleKey || 'agent',
+        roleName: roleNameOf(i.roleKey || 'agent', req.business),
+        expiresAt: i.expiresAt,
+      })),
     },
   });
 });
 
-export const inviteSchema = z.object({ email: z.string().email('Correo inválido') });
+export const inviteSchema = z.object({
+  email: z.string().email('Correo inválido'),
+  // Rol con el que entrará (por defecto, Agente de ventas).
+  roleKey: z.string().max(40).optional().default('agent'),
+});
 
 /**
  * POST /api/members/invite  (solo dueño)
@@ -103,6 +120,7 @@ export const inviteMember = asyncHandler(async (req, res) => {
       business: req.businessId,
       email,
       role: 'colaborador',
+      roleKey: validRoleKey(req.body.roleKey, req.business) ? req.body.roleKey : 'agent',
       token,
       invitedBy: req.userId,
       expiresAt: new Date(Date.now() + INVITE_TTL_MS),
@@ -179,7 +197,7 @@ export const acceptInvitation = asyncHandler(async (req, res) => {
 
   await Membership.updateOne(
     { business: invitation.business, user: req.userId },
-    { $setOnInsert: { role: invitation.role } },
+    { $setOnInsert: { role: invitation.role, roleKey: invitation.roleKey || 'agent' } },
     { upsert: true }
   );
   await invitation.deleteOne();
@@ -269,6 +287,144 @@ export const updateTeamSecurity = asyncHandler(async (req, res) => {
     summary: on ? 'Exigió verificación en dos pasos a todo el equipo.' : 'Dejó de exigir verificación en dos pasos al equipo.',
   });
   res.json({ success: true, data: { requireTeam2fa: on, closed } });
+});
+
+/* ── IAM: roles del equipo ─────────────────────────────────────────────── */
+
+const levelEnum = z.enum(['none', 'view', 'edit']);
+const modulesSchema = z.object(Object.fromEntries(MODULES.map((m) => [m, levelEnum.optional()])));
+const channelsSchema = z.union([z.literal('all'), z.array(z.enum(CHANNELS)).max(CHANNELS.length)]);
+
+function validRoleKey(key, business) {
+  if (PRESET_ROLES[key]) return true;
+  if (String(key || '').startsWith('role:')) {
+    const id = key.slice(5);
+    return (business?.customRoles || []).some((r) => String(r._id) === id);
+  }
+  return false;
+}
+
+function roleNameOf(key, business) {
+  if (PRESET_ROLES[key]) return PRESET_ROLES[key].name;
+  if (String(key || '').startsWith('role:')) {
+    return (business?.customRoles || []).find((r) => String(r._id) === key.slice(5))?.name || 'Rol eliminado';
+  }
+  return key === 'custom' ? 'Personalizado' : 'Colaborador';
+}
+
+/** Roles disponibles para asignar (listos + personalizados del negocio). */
+function rolesCatalog(business) {
+  return {
+    modules: MODULES,
+    moduleLevels: MODULE_LEVELS,
+    channels: CHANNELS,
+    presets: Object.entries(PRESET_ROLES).map(([key, r]) => ({
+      key,
+      name: r.name,
+      description: r.description,
+      modules: normalizeModules(r.modules),
+      channels: normalizeChannels(r.channels),
+    })),
+    custom: (business?.customRoles || []).map((r) => ({
+      key: `role:${r._id}`,
+      id: String(r._id),
+      name: r.name,
+      modules: normalizeModules(r.modules),
+      channels: normalizeChannels(r.channels),
+    })),
+  };
+}
+
+export const memberRoleSchema = z
+  .object({
+    roleKey: z.string().max(40),
+    access: z.object({ modules: modulesSchema, channels: channelsSchema }).optional(),
+  })
+  .refine((d) => d.roleKey !== 'custom' || d.access, { message: 'Falta el acceso personalizado.', path: ['access'] });
+
+/**
+ * PUT /api/members/:userId/role — asigna un rol (o acceso personalizado).
+ * Lo hace quien tiene "equipo: editar" (dueño o administrador). Nadie cambia su
+ * propio rol ni el del dueño.
+ */
+export const updateMemberRole = asyncHandler(async (req, res) => {
+  const m = await Membership.findOne({ business: req.businessId, user: req.params.userId });
+  if (!m) throw ApiError.notFound('Ese miembro no existe.');
+  if (m.role === 'owner') throw ApiError.badRequest('El dueño siempre tiene todo.');
+  if (String(req.params.userId) === String(req.userId)) {
+    throw ApiError.badRequest('No puedes cambiar tu propio rol. Pídeselo al dueño.');
+  }
+  const { roleKey, access } = req.body;
+  if (roleKey === 'custom') {
+    m.roleKey = 'custom';
+    m.access = { modules: normalizeModules(access.modules), channels: normalizeChannels(access.channels) };
+  } else {
+    if (!validRoleKey(roleKey, req.business)) throw ApiError.badRequest('Ese rol no existe.');
+    m.roleKey = roleKey;
+    m.access = undefined;
+  }
+  await m.save();
+  const user = await User.findById(req.params.userId).select('name email').lean();
+  void logAudit({
+    businessId: req.businessId,
+    userId: req.userId,
+    action: 'member.role',
+    summary: `Asignó el rol ${roleNameOf(roleKey, req.business)} a ${user?.name || user?.email || 'un colaborador'}.`,
+  });
+  res.json({ success: true, data: { access: resolveAccess(m.toObject(), req.business) } });
+});
+
+export const customRoleSchema = z.object({
+  name: z.string().trim().min(2, 'Ponle nombre al rol').max(40),
+  modules: modulesSchema,
+  channels: channelsSchema.optional().default('all'),
+});
+
+/** POST /api/members/roles — crea un rol personalizado (solo dueño, máx. 10). */
+export const createCustomRole = asyncHandler(async (req, res) => {
+  const business = await Business.findById(req.businessId);
+  if ((business.customRoles || []).length >= 10) throw ApiError.badRequest('Llegaste al máximo de 10 roles.');
+  if ((business.customRoles || []).some((r) => r.name.toLowerCase() === req.body.name.toLowerCase())) {
+    throw ApiError.badRequest('Ya tienes un rol con ese nombre.');
+  }
+  business.customRoles.push({
+    name: req.body.name,
+    modules: normalizeModules(req.body.modules),
+    channels: normalizeChannels(req.body.channels),
+  });
+  await business.save();
+  void logAudit({ businessId: req.businessId, userId: req.userId, action: 'role.create', summary: `Creó el rol "${req.body.name}".` });
+  res.status(201).json({ success: true, data: { roles: rolesCatalog(business) } });
+});
+
+/** PUT /api/members/roles/:id — edita un rol personalizado (aplica a quien lo tenga). */
+export const updateCustomRole = asyncHandler(async (req, res) => {
+  const business = await Business.findById(req.businessId);
+  const role = business.customRoles.id(req.params.id);
+  if (!role) throw ApiError.notFound('Ese rol no existe.');
+  role.name = req.body.name;
+  role.modules = normalizeModules(req.body.modules);
+  role.channels = normalizeChannels(req.body.channels);
+  business.markModified('customRoles');
+  await business.save();
+  void logAudit({ businessId: req.businessId, userId: req.userId, action: 'role.update', summary: `Editó el rol "${req.body.name}".` });
+  res.json({ success: true, data: { roles: rolesCatalog(business) } });
+});
+
+/** DELETE /api/members/roles/:id — borra un rol; quien lo tenía pasa a Solo lectura. */
+export const deleteCustomRole = asyncHandler(async (req, res) => {
+  const business = await Business.findById(req.businessId);
+  const role = business.customRoles.id(req.params.id);
+  if (!role) throw ApiError.notFound('Ese rol no existe.');
+  const name = role.name;
+  role.deleteOne();
+  await business.save();
+  const moved = await Membership.updateMany(
+    { business: req.businessId, roleKey: `role:${req.params.id}` },
+    { $set: { roleKey: 'readonly' }, $unset: { access: 1 } }
+  );
+  void logAudit({ businessId: req.businessId, userId: req.userId, action: 'role.delete', summary: `Borró el rol "${name}".` });
+  res.json({ success: true, data: { roles: rolesCatalog(business), moved: moved.modifiedCount } });
 });
 
 export const permissionsSchema = z.object({

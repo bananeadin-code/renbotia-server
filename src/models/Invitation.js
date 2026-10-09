@@ -10,6 +10,8 @@ const invitationSchema = new mongoose.Schema(
     business: { type: mongoose.Schema.Types.ObjectId, ref: 'Business', required: true, index: true },
     email: { type: String, required: true, lowercase: true, trim: true },
     role: { type: String, enum: ['colaborador'], default: 'colaborador' },
+    // Rol con el que entra al aceptar (ver config/access.js).
+    roleKey: { type: String, default: 'agent' },
     token: { type: String, required: true, unique: true },
     invitedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     expiresAt: { type: Date, required: true },

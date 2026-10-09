@@ -13,7 +13,15 @@ const membershipSchema = new mongoose.Schema(
     business: { type: mongoose.Schema.Types.ObjectId, ref: 'Business', required: true, index: true },
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     role: { type: String, enum: ['owner', 'colaborador'], default: 'colaborador' },
-    // Permisos del colaborador (el dueño los tiene todos, se ignoran para él).
+    // Rol del colaborador (Fase 3): 'admin' | 'agent' | 'readonly' (listos),
+    // 'role:<id>' (rol personalizado del negocio) o 'custom' (acceso propio en
+    // `access`). Vacío = permisos de antes (los 4 interruptores de abajo).
+    roleKey: { type: String, default: '' },
+    access: {
+      modules: { type: mongoose.Schema.Types.Mixed, default: undefined },
+      channels: { type: mongoose.Schema.Types.Mixed, default: undefined },
+    },
+    // Permisos de antes de los roles (se conservan para migrar sin cambios).
     permissions: {
       simulator: { type: Boolean, default: true },
       training: { type: Boolean, default: true },
