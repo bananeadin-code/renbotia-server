@@ -1,10 +1,11 @@
 import { z } from 'zod';
+import * as accessService from '../services/access.service.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import * as authService from '../services/auth.service.js';
 import { deleteAccount as deleteAccountService } from '../services/account.service.js';
 import { User } from '../models/User.js';
 import { env, isProd } from '../config/env.js';
-import { requestContext, revokeSession, revokeAllSessions, listSessions } from '../services/session.service.js';
+import { requestContext, revokeSession, revokeAllSessions, listSessions, listContexts } from '../services/session.service.js';
 import { verifyRefreshToken } from '../utils/jwt.js';
 import { ApiError } from '../utils/ApiError.js';
 
@@ -66,11 +67,25 @@ const deviceCookieOptions = {
   path: '/api/auth',
 };
 
-function sendAuthResponse(res, { user, accessToken, refreshToken }, status = 200) {
-  res.cookie('refreshToken', refreshToken, refreshCookieOptions);
+function sendAuthResponse(res, result, status = 200) {
+  // Falta elegir a qué entrar (dueño o proyecto) o un código del proyecto: aún
+  // sin sesión ni cookie.
+  if (result.needsContext || result.needsContextCode || result.needsCode) {
+    return res.json({
+      success: true,
+      data: {
+        needsContext: Boolean(result.needsContext || result.needsContextCode),
+        needsCode: Boolean(result.needsContextCode || result.needsCode),
+        contexts: result.contexts || (result.context ? [result.context] : []),
+        contextToken: result.contextToken,
+        name: result.user?.name || '',
+      },
+    });
+  }
+  res.cookie('refreshToken', result.refreshToken, refreshCookieOptions);
   res.status(status).json({
     success: true,
-    data: { user, accessToken },
+    data: { user: result.user, accessToken: result.accessToken, context: result.context || null },
   });
 }
 
@@ -203,6 +218,67 @@ export const me = asyncHandler(async (req, res) => {
   res.json({ success: true, data: { user: req.user } });
 });
 
+/* ── Contexto (dueño / proyecto) y confirmación de identidad ─────────────── */
+
+export const selectContextSchema = z.object({
+  contextToken: z.string().min(20),
+  businessId: z.string().length(24),
+  code: z.string().regex(/^\d{6}$/).optional(),
+});
+
+/** POST /api/auth/context/select — elige a qué entrar tras el login. */
+export const selectContext = asyncHandler(async (req, res) => {
+  const result = await accessService.selectContext({ ...req.body, ctx: requestContext(req) });
+  if (result.needsCode) {
+    return res.json({ success: true, data: { needsCode: true, context: result.context } });
+  }
+  sendAuthResponse(res, result);
+});
+
+export const switchContextSchema = z.object({ businessId: z.string().length(24) });
+
+/** POST /api/auth/context/switch — cambia de proyecto (sesión nueva, la anterior se cierra). */
+export const switchContext = asyncHandler(async (req, res) => {
+  const result = await accessService.switchContext({
+    userId: req.userId,
+    sessionId: req.sessionId,
+    businessId: req.body.businessId,
+    ctx: requestContext(req),
+  });
+  if (result.same) return res.json({ success: true, data: { same: true, context: result.context } });
+  res.cookie('refreshToken', result.refreshToken, refreshCookieOptions);
+  res.json({ success: true, data: { accessToken: result.accessToken, context: result.context } });
+});
+
+/** GET /api/auth/contexts — a qué puede entrar el usuario (para el selector). */
+export const getContexts = asyncHandler(async (req, res) => {
+  const contexts = await listContexts(req.userId);
+  res.json({
+    success: true,
+    data: {
+      contexts: contexts.map((c) => ({ kind: c.kind, businessId: c.businessId, name: c.name, photo: c.photo, requireTeam2fa: c.requireTeam2fa })),
+      current: req.sessionContext || null,
+    },
+  });
+});
+
+export const stepUpSchema = z.object({
+  password: z.string().min(1).max(200).optional(),
+  code: z.string().regex(/^\d{6}$/).optional(),
+});
+
+/** POST /api/auth/step-up — confirma identidad (contraseña o código) por 10 minutos. */
+export const stepUp = asyncHandler(async (req, res) => {
+  const r = await accessService.stepUp({ userId: req.userId, sessionId: req.sessionId, ...req.body });
+  res.json({ success: true, data: r });
+});
+
+/** POST /api/auth/step-up/code — envía el código para confirmar identidad. */
+export const stepUpCode = asyncHandler(async (req, res) => {
+  const r = await accessService.sendStepUpCode(req.userId);
+  res.json({ success: true, data: r });
+});
+
 export const updateProfileSchema = z.object({
   name: z.string().min(2, 'El nombre debe tener al menos 2 caracteres').max(80),
 });
@@ -252,6 +328,10 @@ export const deleteAccountSchema = z.object({
 
 /** DELETE /api/auth/account — elimina la cuenta del usuario y TODOS sus datos. */
 export const deleteAccount = asyncHandler(async (req, res) => {
+  // Eliminar la cuenta borra también su negocio: solo desde una sesión de dueño.
+  if (req.sessionContext?.kind === 'member' && (await accessService.ownsBusiness(req.userId))) {
+    throw new ApiError(403, 'Para eliminar tu cuenta entra como dueño de tu negocio.', { code: 'OWNER_CONTEXT_REQUIRED' });
+  }
   await deleteAccountService({
     userId: req.userId,
     password: req.body.password,

@@ -13,13 +13,21 @@ export function otpCodeEmail(p) {
   const greet = p.customerName ? `Hola ${escapeHtml(p.customerName)},` : 'Hola,';
 
   const subject =
-    p.purpose === 'login_2fa'
+    p.purpose === 'step_up'
+      ? `Confirma que eres tú: ${p.code}`
+      : p.purpose === 'context_2fa'
+        ? `Tu código para entrar al proyecto: ${p.code}`
+        : p.purpose === 'login_2fa'
       ? `Tu código de acceso: ${p.code}`
       : p.purpose === 'change_email'
         ? `Confirma tu nuevo correo: ${p.code}`
         : `Confirma tu correo: ${p.code}`;
   const intro =
-    p.purpose === 'login_2fa'
+    p.purpose === 'step_up'
+      ? 'Usa este código para confirmar que eres tú antes de un cambio importante en tu cuenta de RenBotIA. Si no lo pediste, ignora este correo y cambia tu contraseña.'
+      : p.purpose === 'context_2fa'
+        ? 'El negocio al que quieres entrar exige verificación en dos pasos. Usa este código para continuar.'
+        : p.purpose === 'login_2fa'
       ? 'Usa este código para completar tu inicio de sesión en RenBotIA.'
       : p.purpose === 'change_email'
         ? 'Usa este código para confirmar tu nuevo correo en RenBotIA.'

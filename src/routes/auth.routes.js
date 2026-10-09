@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { requireRecentAuth } from '../middleware/stepUp.middleware.js';
 import { validate } from '../middleware/validate.middleware.js';
 import { requireAuth } from '../middleware/auth.middleware.js';
 import { authLimiter } from '../middleware/rateLimit.middleware.js';
@@ -17,6 +18,13 @@ router.post('/verify-2fa', authLimiter, validate(auth.verify2faSchema), auth.ver
 router.post('/resend-code', authLimiter, validate(auth.resendCodeSchema), auth.resendCode);
 router.get('/config', auth.getAuthConfig); // Client ID de Google (público)
 router.post('/refresh', auth.refresh);
+// Contexto: elegir a qué entrar tras el login, cambiar de proyecto, listar.
+router.post('/context/select', authLimiter, validate(auth.selectContextSchema), auth.selectContext);
+router.post('/context/switch', requireAuth, validate(auth.switchContextSchema), auth.switchContext);
+router.get('/contexts', requireAuth, auth.getContexts);
+// Confirmar identidad para acciones delicadas (10 min).
+router.post('/step-up', requireAuth, authLimiter, validate(auth.stepUpSchema), auth.stepUp);
+router.post('/step-up/code', requireAuth, authLimiter, auth.stepUpCode);
 router.post('/logout', auth.logout);
 
 // Recuperación de contraseña (enlace de un solo uso por correo)
@@ -26,13 +34,13 @@ router.post('/reset-password', authLimiter, validate(auth.resetSchema), auth.res
 // Rutas protegidas: datos del usuario autenticado + ajustes de seguridad
 router.get('/me', requireAuth, auth.me);
 router.patch('/profile', requireAuth, validate(auth.updateProfileSchema), auth.updateProfile);
-router.patch('/2fa', requireAuth, validate(auth.twoFactorSchema), auth.updateTwoFactor);
+router.patch('/2fa', requireAuth, requireRecentAuth, validate(auth.twoFactorSchema), auth.updateTwoFactor);
 // Sesiones activas (Perfil → Seguridad): ver, cerrar una o cerrar las demás.
 router.get('/sessions', requireAuth, auth.getSessions);
 router.post('/sessions/revoke-others', requireAuth, auth.revokeOtherSessions);
 router.delete('/sessions/:id', requireAuth, auth.deleteSession);
 // Cambio de correo con re-verificación (código al correo nuevo).
-router.post('/email/request', requireAuth, authLimiter, validate(auth.requestEmailChangeSchema), auth.requestEmailChange);
+router.post('/email/request', requireAuth, requireRecentAuth, authLimiter, validate(auth.requestEmailChangeSchema), auth.requestEmailChange);
 router.post('/email/verify', requireAuth, authLimiter, validate(auth.verifyEmailChangeSchema), auth.verifyEmailChange);
 // Eliminación de cuenta (con rate limit: reautentica con contraseña).
 router.delete('/account', requireAuth, authLimiter, validate(auth.deleteAccountSchema), auth.deleteAccount);

@@ -1,4 +1,5 @@
 import { Business } from '../models/Business.js';
+import { revokeSession } from '../services/session.service.js';
 import { Membership } from '../models/Membership.js';
 import { ApiError } from '../utils/ApiError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
@@ -17,8 +18,36 @@ import { ROLES, PERMISSION_KEYS, DEFAULT_MEMBER_PERMISSIONS } from '../config/co
  * - Sin negocio: 404 NO_BUSINESS para que el frontend mande al onboarding.
  */
 export const requireBusiness = asyncHandler(async (req, res, next) => {
-  // Proyecto activo elegido por el cliente (switcher). Opcional; si viene, SIEMPRE
-  // se valida que el usuario tenga acceso a ese negocio antes de usarlo.
+  // Sesión con CONTEXTO (dueño o proyecto): el negocio lo fija la sesión, no el
+  // cliente. Una sesión de proyecto nunca ve otro negocio ni actúa como dueño.
+  const sc = req.sessionContext;
+  if ((sc?.kind === 'owner' || sc?.kind === 'member') && sc.business) {
+    const business = await Business.findById(sc.business);
+    let role = null;
+    if (business && sc.kind === 'owner' && String(business.owner) === String(req.userId)) {
+      role = 'owner';
+    } else if (business && sc.kind === 'member') {
+      const m = await Membership.findOne({ business: business._id, user: req.userId }).select('role permissions').lean();
+      if (m && m.role !== 'owner') {
+        role = m.role;
+        req.permissions = { ...DEFAULT_MEMBER_PERMISSIONS, ...(m.permissions || {}) };
+      }
+    }
+    if (!role) {
+      // Ya no tiene acceso (lo quitaron del equipo o el negocio cambió de dueño).
+      if (req.sessionId) await revokeSession(req.sessionId, 'access_removed').catch(() => {});
+      throw new ApiError(401, 'Ya no tienes acceso a este proyecto. Inicia sesión de nuevo.', { code: 'NO_ACCESS' });
+    }
+    req.business = business;
+    req.businessId = business._id;
+    req.membershipRole = role;
+    if (role === 'owner') req.permissions = Object.fromEntries(PERMISSION_KEYS.map((k) => [k, true]));
+    return next();
+  }
+
+  // Sesión de cuenta (sin negocio aún, o anterior a los contextos): comportamiento
+  // previo. Proyecto activo elegido por el cliente (switcher). Opcional; si viene,
+  // SIEMPRE se valida que el usuario tenga acceso a ese negocio antes de usarlo.
   const desiredId = req.get('x-business-id') || null;
 
   const owned = await Business.findOne({ owner: req.userId });

@@ -101,6 +101,12 @@ const businessSchema = new mongoose.Schema(
         iceBreakers: { type: [String], default: [] },
       },
     },
+    // ── Seguridad del equipo ──
+    // requireTeam2fa: los colaboradores deben verificar un segundo factor (código
+    // por correo o Google) para entrar a este negocio.
+    security: {
+      requireTeam2fa: { type: Boolean, default: false },
+    },
     // ── Contactos bloqueados ──
     // El bot ignora por completo sus mensajes (no se guardan ni gastan créditos).
     // channel + id = wa_id (WhatsApp), PSID (Messenger), IGSID (Instagram) o la

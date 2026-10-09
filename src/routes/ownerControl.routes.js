@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { requireRecentAuth } from '../middleware/stepUp.middleware.js';
 import { requireAuth } from '../middleware/auth.middleware.js';
 import { requireBusiness, requireBusinessRole } from '../middleware/tenant.middleware.js';
 import * as owner from '../controllers/ownerControl.controller.js';
@@ -8,7 +9,7 @@ const router = Router();
 router.use(requireAuth, requireBusiness, requireBusinessRole('owner'));
 
 router.get('/', owner.getOwnerControl);
-router.post('/link-code', owner.createOwnerLinkCode);
-router.delete('/:id', owner.unlinkOwner);
+router.post('/link-code', requireRecentAuth, owner.createOwnerLinkCode);
+router.delete('/:id', requireRecentAuth, owner.unlinkOwner);
 
 export default router;

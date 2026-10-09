@@ -37,5 +37,10 @@ export const requireAuth = asyncHandler(async (req, res, next) => {
   req.user = user;
   req.userId = user.id;
   req.sessionId = payload.sid || null;
+  // Contexto de la sesión: dueño de su negocio, colaborador de un proyecto o
+  // cuenta (sin negocio / sesiones previas). requireBusiness lo hace cumplir.
+  req.sessionContext = payload.sid
+    ? { kind: payload.ck || 'account', business: payload.cb || null }
+    : { kind: 'account', business: null };
   next();
 });

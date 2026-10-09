@@ -9,7 +9,13 @@ import mongoose from 'mongoose';
 const emailOtpSchema = new mongoose.Schema(
   {
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
-    purpose: { type: String, enum: ['verify_email', 'login_2fa', 'change_email'], required: true },
+    // step_up: confirmar identidad antes de una acción delicada.
+    // context_2fa: entrar a un proyecto que exige verificación en dos pasos.
+    purpose: {
+      type: String,
+      enum: ['verify_email', 'login_2fa', 'change_email', 'step_up', 'context_2fa'],
+      required: true,
+    },
     // Para 'change_email': correo NUEVO a confirmar (el código se envía ahí).
     pendingEmail: { type: String, default: '' },
     codeHash: { type: String, required: true },

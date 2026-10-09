@@ -6,7 +6,8 @@ import { env } from '../config/env.js';
 import { sendPasswordResetEmail, sendWelcomeEmail } from './email.service.js';
 import { isDisposableEmail } from '../utils/disposableEmails.js';
 import { verifyRefreshToken, signDeviceToken, verifyDeviceToken } from '../utils/jwt.js';
-import { startSession, rotateSession, revokeAllSessions } from './session.service.js';
+import { rotateSession, revokeAllSessions } from './session.service.js';
+import { finishLogin } from './access.service.js';
 import { sendSecurityEmail } from './email.service.js';
 import { sendOtp, verifyOtp } from './otp.service.js';
 import { logger } from '../utils/logger.js';
@@ -21,11 +22,8 @@ import { Business } from '../models/Business.js';
 const MAX_LOGIN_ATTEMPTS = 8;
 const LOCK_MINUTES = 15;
 
-// Cada inicio de sesión exitoso crea una sesión en servidor (ver session.service).
-async function issueTokens(user, ctx) {
-  const { accessToken, refreshToken } = await startSession({ user, ctx });
-  return { accessToken, refreshToken };
-}
+// Cada inicio de sesión exitoso termina en finishLogin: entra directo a su único
+// contexto (dueño o proyecto) o pide elegir si tiene varios (ver access.service).
 
 export async function registerUser({ name, email, password, ref }) {
   // Bloqueo de correos desechables/temporales (anti-abuso de cuentas Free).
@@ -117,8 +115,9 @@ export async function loginUser({ email, password, deviceToken, ctx = {} }) {
     return { needs2fa: true, email: user.email, ...otp };
   }
 
-  const tokens = await issueTokens(user, ctx);
-  return { user, ...tokens };
+  // Segundo factor: si la cuenta tiene 2FA, llegar aquí implica código verificado
+  // o un dispositivo recordado tras un 2FA previo.
+  return finishLogin(user, ctx, { mfa: Boolean(user.twoFactorEnabled) });
 }
 
 /** ¿El token de dispositivo es válido y pertenece a este usuario? */
@@ -145,8 +144,7 @@ export async function verifyEmailAndLogin({ email, code, ctx = {} }) {
     // Bienvenida (cálida) al activar la cuenta. Fail-open, no bloquea el login.
     void sendWelcomeEmail({ to: user.email, customerName: user.name });
   }
-  const tokens = await issueTokens(user, ctx);
-  return { user, ...tokens };
+  return finishLogin(user, ctx, { mfa: false });
 }
 
 /**
@@ -157,9 +155,9 @@ export async function verify2faAndLogin({ email, code, rememberDevice, ctx = {} 
   const user = await User.findOne({ email });
   if (!user) throw ApiError.badRequest('No encontramos esa cuenta.');
   await verifyOtp({ userId: user._id, purpose: 'login_2fa', code });
-  const tokens = await issueTokens(user, ctx);
+  const result = await finishLogin(user, ctx, { mfa: true });
   const deviceToken = rememberDevice ? signDeviceToken(user._id) : null;
-  return { user, ...tokens, deviceToken };
+  return { ...result, deviceToken };
 }
 
 /**
@@ -266,7 +264,8 @@ export async function googleAuth(credential, ref, ctx = {}) {
     }
   }
 
-  return { user, ...(await issueTokens(user, ctx)) };
+  // Google ya autenticó con su propia seguridad: cuenta como segundo factor.
+  return finishLogin(user, ctx, { mfa: true });
 }
 
 /**

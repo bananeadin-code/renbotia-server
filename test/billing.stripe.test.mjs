@@ -114,6 +114,18 @@ describe('cobros con Stripe (modo prueba)', { skip }, () => {
       other = await makeOwner('Otro');
       T = await login(o.user, o.password);
       T2 = await login(other.user, other.password);
+      // Pagar y tocar la tarjeta exigen confirmar identidad (modo sudo, 10 min).
+      const step = (t, pw) => fetch(`${A}/auth/step-up`, { method: 'POST', headers: H(t), body: JSON.stringify({ password: pw }) });
+      assert.equal((await step(T, o.password)).status, 200);
+      assert.equal((await step(T2, other.password)).status, 200);
+    });
+
+    it('sin confirmar identidad no se puede pagar', async () => {
+      const fresh = await makeOwner('Sudo');
+      const Tf = await login(fresh.user, fresh.password);
+      const r = await fetch(`${A}/billing/intent`, { method: 'POST', headers: H(Tf, fresh.business._id), body: JSON.stringify({ kind: 'credits', packKey: 'pack_100k' }) });
+      assert.equal(r.status, 403);
+      assert.equal((await r.json()).details?.code, 'STEP_UP_REQUIRED');
     });
 
     it('el onboarding no activa planes de pago', async () => {

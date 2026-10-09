@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { requireRecentAuth } from '../middleware/stepUp.middleware.js';
 import { requireAuth } from '../middleware/auth.middleware.js';
 import { requireBusiness, requirePermission } from '../middleware/tenant.middleware.js';
 import { validate } from '../middleware/validate.middleware.js';
@@ -14,10 +15,11 @@ router.get('/', connections.getConnections);
 router.post(
   '/whatsapp',
   requirePermission('connections'),
+  requireRecentAuth,
   validate(connections.connectSchema),
   connections.connectWhatsApp
 );
-router.post('/whatsapp/disconnect', requirePermission('connections'), connections.disconnectWhatsApp);
+router.post('/whatsapp/disconnect', requirePermission('connections'), requireRecentAuth, connections.disconnectWhatsApp);
 
 // Perfil de WhatsApp Business (ver: cualquier miembro; editar: dueño).
 router.get('/whatsapp/profile', connections.getWhatsappProfile);
@@ -32,6 +34,7 @@ router.put(
 router.post(
   '/messenger',
   requirePermission('connections'),
+  requireRecentAuth,
   validate(connections.connectMessengerSchema),
   connections.connectMessenger
 );
@@ -41,7 +44,7 @@ router.post(
   validate(connections.selectMessengerPageSchema),
   connections.selectMessengerPage
 );
-router.post('/messenger/disconnect', requirePermission('connections'), connections.disconnectMessenger);
+router.post('/messenger/disconnect', requirePermission('connections'), requireRecentAuth, connections.disconnectMessenger);
 
 // Ajustes por canal (pausa, preguntas iniciales, saludo): dueño.
 router.put(
@@ -55,6 +58,7 @@ router.put(
 router.post(
   '/instagram',
   requirePermission('connections'),
+  requireRecentAuth,
   validate(connections.connectMessengerSchema),
   connections.connectInstagram
 );
@@ -64,7 +68,7 @@ router.post(
   validate(connections.selectInstagramSchema),
   connections.selectInstagramAccount
 );
-router.post('/instagram/disconnect', requirePermission('connections'), connections.disconnectInstagram);
+router.post('/instagram/disconnect', requirePermission('connections'), requireRecentAuth, connections.disconnectInstagram);
 
 // Plantillas de la WABA (ver: cualquier miembro; crear: dueño).
 router.get('/whatsapp/templates', connections.listWhatsappTemplates);

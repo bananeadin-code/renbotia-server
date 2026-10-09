@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { setSessionContext, tokensForSession } from '../services/session.service.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { Business } from '../models/Business.js';
 import { Membership } from '../models/Membership.js';
@@ -87,5 +88,13 @@ export const completeOnboarding = asyncHandler(async (req, res) => {
     botConfig: safeBotConfig,
   });
 
-  res.status(201).json({ success: true, data: bundle });
+  // La sesión (de cuenta, sin negocio) pasa a ser la del DUEÑO de este negocio, y
+  // se entregan tokens nuevos con ese contexto.
+  let accessToken = null;
+  if (req.sessionId && req.sessionContext?.kind === 'account') {
+    await setSessionContext(req.sessionId, { kind: 'owner', business: bundle.business._id });
+    accessToken = (await tokensForSession(req.user, req.sessionId))?.accessToken || null;
+  }
+
+  res.status(201).json({ success: true, data: { ...bundle, accessToken } });
 });

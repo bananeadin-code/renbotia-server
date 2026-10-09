@@ -1,6 +1,8 @@
 import crypto from 'node:crypto';
 import { Session } from '../models/Session.js';
 import { User } from '../models/User.js';
+import { Business } from '../models/Business.js';
+import { Membership } from '../models/Membership.js';
 import { env } from '../config/env.js';
 import { ApiError } from '../utils/ApiError.js';
 import { logger } from '../utils/logger.js';
@@ -22,7 +24,11 @@ import { alertOps } from './alert.service.js';
  */
 
 export const IDLE_DAYS = 7;
+// La sesión de DUEÑO (paga, gestiona equipo y canales) vence antes por inactividad.
+export const OWNER_IDLE_DAYS = 3;
 export const ABSOLUTE_DAYS = 30;
+// Confirmación de identidad válida para acciones delicadas.
+export const STEP_UP_MS = 10 * 60 * 1000;
 // Varias pestañas pueden renovar a la vez con la misma cookie: el jti anterior
 // sigue valiendo unos segundos para no confundirlo con un robo.
 const GRACE_MS = 60 * 1000;
@@ -46,9 +52,20 @@ function deviceKeyOf(browser, os, country) {
   return crypto.createHash('sha256').update(`${browser}|${os}|${country}`).digest('hex').slice(0, 32);
 }
 
+const idleMs = (session) => (session?.context?.kind === 'owner' ? OWNER_IDLE_DAYS : IDLE_DAYS) * DAY;
+
 /** Emite el par de tokens de una sesión (el refresh con su jti vigente). */
 function tokensFor(user, session) {
-  const base = { sub: String(user._id), role: user.role, tv: user.tokenVersion ?? 0, sid: String(session._id) };
+  const base = {
+    sub: String(user._id),
+    role: user.role,
+    tv: user.tokenVersion ?? 0,
+    sid: String(session._id),
+    // Contexto de la sesión (dueño / proyecto): el servidor lo usa para limitar
+    // a qué negocio y con qué rol se accede.
+    ck: session.context?.kind || 'account',
+    cb: session.context?.business ? String(session.context.business) : null,
+  };
   return {
     accessToken: signAccessToken(base),
     refreshToken: signRefreshToken({ ...base, jti: session.jti }),
@@ -74,7 +91,7 @@ function cacheDrop(sid) {
  * @param {object} p.ctx  requestContext(req)
  * @param {boolean} [p.silent] sin aviso de dispositivo nuevo (migración)
  */
-export async function startSession({ user, ctx = {}, silent = false }) {
+export async function startSession({ user, ctx = {}, silent = false, context = null, mfa = false }) {
   const { browser, os, label } = describeDevice(ctx.userAgent);
   const country = ctx.country || '';
   const deviceKey = deviceKeyOf(browser, os, country);
@@ -93,6 +110,8 @@ export async function startSession({ user, ctx = {}, silent = false }) {
 
   const session = await Session.create({
     user: user._id,
+    context: context || { kind: 'account', business: null },
+    mfa: Boolean(mfa),
     jti: newJti(),
     device: label,
     browser,
@@ -144,7 +163,7 @@ export async function revokeAllSessions(userId, { exceptId = null, reason = 'oth
 function isExpired(session, now = Date.now()) {
   if (session.revokedAt) return 'revoked';
   if (session.expiresAt.getTime() <= now) return 'expired';
-  if (session.lastUsedAt.getTime() + IDLE_DAYS * DAY <= now) return 'idle';
+  if (session.lastUsedAt.getTime() + idleMs(session) <= now) return 'idle';
   return null;
 }
 
@@ -164,7 +183,14 @@ export async function rotateSession(payload, ctx = {}) {
   // Tokens de antes de esta función (sin sid): se migran a una sesión nueva sin
   // sacar a nadie. Dejan de existir solos en 7 días (vida del refresh viejo).
   if (!payload.sid) {
-    const { accessToken, refreshToken } = await startSession({ user, ctx, silent: true });
+    const contexts = await listContexts(user._id);
+    const pick = contexts.find((c) => c.kind === 'owner') || (contexts.length === 1 ? contexts[0] : null);
+    const { accessToken, refreshToken } = await startSession({
+      user,
+      ctx,
+      silent: true,
+      context: pick ? { kind: pick.kind, business: pick.businessId } : null,
+    });
     return { accessToken, refreshToken };
   }
 
@@ -233,9 +259,9 @@ export async function assertSessionActive(sid, userId) {
     if (!hit.ok) throw ApiError.unauthorized('Tu sesión terminó, inicia sesión de nuevo');
     return;
   }
-  const session = await Session.findOne({ _id: sid, user: userId }).select('revokedAt expiresAt lastUsedAt').lean();
+  const session = await Session.findOne({ _id: sid, user: userId }).select('revokedAt expiresAt lastUsedAt context').lean();
   const now = Date.now();
-  const ok = Boolean(session) && !session.revokedAt && session.expiresAt.getTime() > now && session.lastUsedAt.getTime() + IDLE_DAYS * DAY > now;
+  const ok = Boolean(session) && !isExpired(session, now);
   cacheSet(sid, ok);
   if (!ok) throw ApiError.unauthorized('Tu sesión terminó, inicia sesión de nuevo');
   if (now - session.lastUsedAt.getTime() > 60 * 1000) {
@@ -243,22 +269,132 @@ export async function assertSessionActive(sid, userId) {
   }
 }
 
+/** Etiqueta legible del contexto de una sesión ("Dueño · Cafetería Luna"). */
+function contextLabel(session, names) {
+  const kind = session.context?.kind;
+  const name = session.context?.business ? names.get(String(session.context.business)) || '' : '';
+  if (kind === 'owner') return `Dueño${name ? ` · ${name}` : ''}`;
+  if (kind === 'member') return `Colaborador${name ? ` · ${name}` : ''}`;
+  return 'Cuenta';
+}
+
+async function businessNames(rows) {
+  const ids = [...new Set(rows.map((r) => r.context?.business).filter(Boolean).map(String))];
+  if (!ids.length) return new Map();
+  const list = await Business.find({ _id: { $in: ids } }).select('name').lean();
+  return new Map(list.map((b) => [String(b._id), b.name]));
+}
+
+function publicSession(s, names, currentSid) {
+  return {
+    id: String(s._id),
+    device: s.device || 'Dispositivo',
+    browser: s.browser,
+    os: s.os,
+    place: countryName(s.country),
+    context: contextLabel(s, names),
+    contextKind: s.context?.kind || 'account',
+    createdAt: s.createdAt,
+    lastUsedAt: s.lastUsedAt,
+    current: String(s._id) === String(currentSid || ''),
+  };
+}
+
 /** Sesiones vivas del usuario para Perfil → Seguridad. */
 export async function listSessions(userId, currentSid) {
   const now = Date.now();
-  const rows = await Session.find({ user: userId, revokedAt: null, expiresAt: { $gt: new Date(now) } })
-    .sort({ lastUsedAt: -1 })
-    .lean();
-  return rows
-    .filter((s) => s.lastUsedAt.getTime() + IDLE_DAYS * DAY > now)
-    .map((s) => ({
-      id: String(s._id),
-      device: s.device || 'Dispositivo',
-      browser: s.browser,
-      os: s.os,
-      place: countryName(s.country),
-      createdAt: s.createdAt,
-      lastUsedAt: s.lastUsedAt,
-      current: String(s._id) === String(currentSid || ''),
-    }));
+  const rows = (
+    await Session.find({ user: userId, revokedAt: null, expiresAt: { $gt: new Date(now) } })
+      .sort({ lastUsedAt: -1 })
+      .lean()
+  ).filter((s) => !isExpired(s, now));
+  const names = await businessNames(rows);
+  return rows.map((s) => publicSession(s, names, currentSid));
+}
+
+/** Sesiones vivas de un colaborador DENTRO de un negocio (para el dueño en Equipo). */
+export async function listMemberSessions(businessId, userId) {
+  const now = Date.now();
+  const rows = (
+    await Session.find({
+      user: userId,
+      'context.kind': 'member',
+      'context.business': businessId,
+      revokedAt: null,
+      expiresAt: { $gt: new Date(now) },
+    })
+      .sort({ lastUsedAt: -1 })
+      .lean()
+  ).filter((s) => !isExpired(s, now));
+  const names = await businessNames(rows);
+  return rows.map((s) => publicSession(s, names, null));
+}
+
+/**
+ * Cierra las sesiones de colaborador abiertas en un negocio (todas o las de una
+ * persona; opcionalmente solo las que no verificaron un segundo factor).
+ */
+export async function revokeMemberSessions(businessId, { userId = null, onlyWithoutMfa = false, reason = 'owner' } = {}) {
+  const filter = { 'context.kind': 'member', 'context.business': businessId, revokedAt: null };
+  if (userId) filter.user = userId;
+  if (onlyWithoutMfa) filter.mfa = { $ne: true };
+  const live = await Session.find(filter).select('_id').lean();
+  if (!live.length) return 0;
+  await Session.updateMany({ _id: { $in: live.map((x) => x._id) } }, { $set: { revokedAt: new Date(), revokedReason: reason } });
+  live.forEach((x) => cacheDrop(x._id));
+  return live.length;
+}
+
+/**
+ * Contextos a los que puede entrar el usuario: su negocio (dueño) y los proyectos
+ * donde colabora.
+ * @returns {Promise<Array<{kind:'owner'|'member', businessId:string, name:string, photo:string, requireTeam2fa:boolean}>>}
+ */
+export async function listContexts(userId) {
+  const [owned, memberships] = await Promise.all([
+    Business.findOne({ owner: userId }).select('name photo').lean(),
+    Membership.find({ user: userId, role: { $ne: 'owner' } }).select('business').lean(),
+  ]);
+  const out = [];
+  if (owned) out.push({ kind: 'owner', businessId: String(owned._id), name: owned.name, photo: owned.photo || '', requireTeam2fa: false });
+  const ids = memberships.map((m) => m.business).filter((id) => !owned || String(id) !== String(owned._id));
+  if (ids.length) {
+    const list = await Business.find({ _id: { $in: ids } }).select('name photo security').lean();
+    for (const b of list) {
+      out.push({
+        kind: 'member',
+        businessId: String(b._id),
+        name: b.name,
+        photo: b.photo || '',
+        requireTeam2fa: Boolean(b.security?.requireTeam2fa),
+      });
+    }
+  }
+  return out;
+}
+
+/** Registra una confirmación de identidad en la sesión (y el 2º factor si hubo código). */
+export async function recordStepUp(sid, { mfa = false } = {}) {
+  const set = { stepUpAt: new Date() };
+  if (mfa) set.mfa = true;
+  await Session.updateOne({ _id: sid, revokedAt: null }, { $set: set });
+}
+
+/** Sesión viva por id (o null). */
+export async function getLiveSession(sid, userId) {
+  if (!sid) return null;
+  const s = await Session.findOne({ _id: sid, user: userId });
+  return s && !isExpired(s) ? s : null;
+}
+
+/** Cambia el contexto de una sesión (p. ej. al crear su negocio en el onboarding). */
+export async function setSessionContext(sid, context) {
+  await Session.updateOne({ _id: sid }, { $set: { context } });
+  cacheDrop(sid);
+}
+
+/** Tokens frescos de una sesión existente (tras cambiar su contexto). */
+export async function tokensForSession(user, sid) {
+  const session = await Session.findById(sid);
+  return session ? tokensFor(user, session) : null;
 }

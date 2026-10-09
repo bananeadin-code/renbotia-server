@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { listMemberSessions as listMemberSessionsSvc, revokeMemberSessions } from '../services/session.service.js';
 import { z } from 'zod';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiError } from '../utils/ApiError.js';
@@ -58,6 +59,7 @@ export const listMembers = asyncHandler(async (req, res) => {
     data: {
       myRole: req.membershipRole,
       members,
+      security: { requireTeam2fa: Boolean(req.business?.security?.requireTeam2fa) },
       invitations: invitations.map((i) => ({ id: i._id, email: i.email, role: i.role, expiresAt: i.expiresAt })),
     },
   });
@@ -211,6 +213,8 @@ export const removeMember = asyncHandler(async (req, res) => {
   if (target.role === 'owner') throw ApiError.badRequest('No puedes quitar al dueño del negocio.');
 
   await target.deleteOne();
+  // Sus sesiones en este negocio se cierran de inmediato.
+  await revokeMemberSessions(req.businessId, { userId: req.params.userId, reason: 'removed' });
   void logAudit({
     businessId: req.businessId,
     userId: req.userId,
@@ -224,6 +228,48 @@ export const removeMember = asyncHandler(async (req, res) => {
 function escapeHtml(str = '') {
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
+
+/** GET /api/members/:userId/sessions — sesiones abiertas del colaborador en este negocio. */
+export const listMemberSessions = asyncHandler(async (req, res) => {
+  const m = await Membership.findOne({ business: req.businessId, user: req.params.userId }).select('role').lean();
+  if (!m || m.role === 'owner') throw ApiError.notFound('Ese colaborador no existe.');
+  res.json({ success: true, data: { sessions: await listMemberSessionsSvc(req.businessId, req.params.userId) } });
+});
+
+/** DELETE /api/members/:userId/sessions — cierra sus sesiones en este negocio. */
+export const closeMemberSessions = asyncHandler(async (req, res) => {
+  const m = await Membership.findOne({ business: req.businessId, user: req.params.userId }).select('role').lean();
+  if (!m || m.role === 'owner') throw ApiError.notFound('Ese colaborador no existe.');
+  const closed = await revokeMemberSessions(req.businessId, { userId: req.params.userId, reason: 'owner' });
+  void logAudit({
+    businessId: req.businessId,
+    userId: req.userId,
+    action: 'member.sessions',
+    summary: `Cerró ${closed} ${closed === 1 ? 'sesión' : 'sesiones'} de un colaborador.`,
+    metadata: { memberUserId: String(req.params.userId) },
+  });
+  res.json({ success: true, data: { closed } });
+});
+
+export const teamSecuritySchema = z.object({ requireTeam2fa: z.boolean() });
+
+/**
+ * PUT /api/members/security — exigir verificación en dos pasos a los
+ * colaboradores. Al activarlo se cierran las sesiones de quien no la verificó
+ * (tendrán que entrar de nuevo con un código).
+ */
+export const updateTeamSecurity = asyncHandler(async (req, res) => {
+  const on = req.body.requireTeam2fa;
+  await Business.updateOne({ _id: req.businessId }, { $set: { 'security.requireTeam2fa': on } });
+  const closed = on ? await revokeMemberSessions(req.businessId, { onlyWithoutMfa: true, reason: 'team_2fa' }) : 0;
+  void logAudit({
+    businessId: req.businessId,
+    userId: req.userId,
+    action: 'team.security',
+    summary: on ? 'Exigió verificación en dos pasos a todo el equipo.' : 'Dejó de exigir verificación en dos pasos al equipo.',
+  });
+  res.json({ success: true, data: { requireTeam2fa: on, closed } });
+});
 
 export const permissionsSchema = z.object({
   simulator: z.boolean().optional(),

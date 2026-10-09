@@ -50,6 +50,19 @@ export function verifyRefreshToken(token) {
 }
 
 /**
+ * Token de "elegir contexto": prueba de que la persona ya se autenticó (contraseña,
+ * 2FA o Google) y le permite elegir si entra como dueño o a un proyecto. Vive 5
+ * minutos y no sirve como acceso ni como refresh (typ 'ctx').
+ */
+export function signContextToken(payload) {
+  return jwt.sign({ ...payload, typ: 'ctx' }, env.jwt.accessSecret, { expiresIn: '5m', algorithm: ALGO });
+}
+
+export function verifyContextToken(token) {
+  return verifyTyped(token, env.jwt.accessSecret, 'ctx');
+}
+
+/**
  * Token de "dispositivo recordado": salta el 2FA en este navegador 60 días.
  * Firmado con el secreto de refresh, pero con `typ: 'device'` para que NO pueda
  * usarse como refresh token (ni al revés).

@@ -12,11 +12,21 @@ import mongoose from 'mongoose';
 const sessionSchema = new mongoose.Schema(
   {
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
-    // Contexto de la sesión (Fase 2: 'owner' | 'member' con su negocio).
+    // Contexto: a qué entra esta sesión. 'owner' = su negocio como dueño (puede
+    // pagar, gestionar equipo y conexiones); 'member' = un proyecto donde colabora
+    // (solo ese negocio y con sus permisos); 'account' = sin negocio todavía
+    // (onboarding) o sesiones de antes de los contextos.
     context: {
-      kind: { type: String, default: 'account' },
+      kind: { type: String, enum: ['account', 'owner', 'member'], default: 'account' },
       business: { type: mongoose.Schema.Types.ObjectId, ref: 'Business', default: null },
     },
+    // ¿Se verificó un segundo factor en esta sesión? (código por correo, Google o
+    // dispositivo recordado tras un 2FA). Lo exige "verificación en dos pasos
+    // para todo el equipo".
+    mfa: { type: Boolean, default: false },
+    // Última confirmación de identidad (contraseña o código) para acciones
+    // delicadas: pagar, cambiar permisos, conectar canales, eliminar…
+    stepUpAt: { type: Date, default: null },
     // Refresh token vigente y el anterior (margen de gracia para pestañas que
     // renuevan al mismo tiempo con la misma cookie).
     jti: { type: String, required: true },
