@@ -48,7 +48,11 @@ export const getMyBusiness = asyncHandler(async (req, res) => {
  * Bitácora de auditoría del negocio (últimos movimientos): quién cambió qué.
  */
 export const getAuditLog = asyncHandler(async (req, res) => {
-  const logs = await AuditLog.find({ business: req.businessId })
+  const filter = { business: req.businessId };
+  if (req.membershipRole !== 'owner') {
+    filter.action = { $not: /^(plan\.|credits\.|billing\.|referral\.|team\.security|member\.sessions)/ };
+  }
+  const logs = await AuditLog.find(filter)
     .sort({ createdAt: -1 })
     .limit(50)
     .populate('user', 'name email')

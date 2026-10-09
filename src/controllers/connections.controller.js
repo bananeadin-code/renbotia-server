@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { qualifyReferral } from '../services/referral.service.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiError } from '../utils/ApiError.js';
 import { env } from '../config/env.js';
@@ -228,6 +229,7 @@ export const connectWhatsApp = asyncHandler(async (req, res) => {
   business.whatsappVerified = true;
   business.whatsappVerifiedAt = new Date();
   await business.save();
+  void qualifyReferral(business.owner); // uso real: el referido cuenta
 
   void logAudit({
     businessId: req.businessId,
@@ -286,6 +288,7 @@ async function linkPage(req, page) {
   business.facebookPageToken = page.access_token;
   business.facebookConnectedAt = new Date();
   await business.save();
+  void qualifyReferral(business.owner); // uso real: el referido cuenta
   // Reaplica las preguntas iniciales y el saludo guardados (si los hay).
   void pushProfile(business, 'facebook');
 
@@ -453,6 +456,7 @@ async function linkInstagram(req, acc) {
   business.instagramPageToken = acc.pageToken;
   business.instagramConnectedAt = new Date();
   await business.save();
+  void qualifyReferral(business.owner); // uso real: el referido cuenta
   void pushProfile(business, 'instagram');
 
   void logAudit({

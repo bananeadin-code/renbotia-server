@@ -6,7 +6,7 @@ import { Plan } from '../models/Plan.js';
 import { ApiError } from '../utils/ApiError.js';
 import { BUSINESS_STATUS } from '../config/constants.js';
 import { addMonths } from '../utils/dates.js';
-import { qualifyReferral } from './referral.service.js';
+import { applyPendingReward } from './referral.service.js';
 
 /**
  * Aprovisiona un negocio completo para un usuario: Business + Subscription
@@ -45,8 +45,6 @@ export async function provisionBusiness({
 
   // El dueño obtiene su membresía 'owner' (base del multiusuario).
   await Membership.create({ business: createdBusiness._id, user: owner, role: 'owner' });
-  // Si llegó por un enlace de invitación, ya cuenta para quien lo invitó.
-  void qualifyReferral(owner);
 
   const now = new Date();
   await Subscription.create({
@@ -67,6 +65,11 @@ export async function provisionBusiness({
     faqs: botConfig.faqs || [],
     businessInfo: botConfig.businessInfo || {},
   });
+
+  // Referidos: crear el negocio ya NO cuenta como referido (cuenta al conectar un
+  // canal real o pagar). Si quien lo crea tenía un regalo pendiente, se entrega
+  // ahora que ya tiene suscripción.
+  await applyPendingReward(owner);
 
   return loadBusinessBundle(createdBusiness._id);
 }

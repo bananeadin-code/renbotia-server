@@ -15,7 +15,11 @@ const router = Router();
  * registro inicial (aún no hay negocio), y ahí cuenta como Free.
  */
 const resolveImportPlan = asyncHandler(async (req, res, next) => {
-  const business = await Business.findOne({ owner: req.userId }).select('_id').lean();
+  const sc = req.sessionContext;
+  const business =
+    (sc?.kind === 'owner' || sc?.kind === 'member') && sc.business
+      ? { _id: sc.business }
+      : await Business.findOne({ owner: req.userId }).select('_id').lean();
   const sub = business ? await Subscription.findOne({ business: business._id }).populate('plan', 'key').lean() : null;
   req.importPlan = sub?.plan?.key || 'free';
   next();
@@ -25,7 +29,8 @@ const resolveImportPlan = asyncHandler(async (req, res, next) => {
 const importLimiter = rateLimit({
   windowMs: 24 * 60 * 60 * 1000,
   max: (req) => (IMPORT_LIMITS[req.importPlan] || IMPORT_LIMITS.free).perDay,
-  keyGenerator: (req) => String(req.userId || req.ip),
+  // Por persona y por negocio: lo que analiza en un proyecto no gasta el cupo del otro.
+  keyGenerator: (req) => `${req.userId || req.ip}:${req.sessionContext?.business || 'own'}`,
   standardHeaders: true,
   legacyHeaders: false,
   message: {

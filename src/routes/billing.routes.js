@@ -20,9 +20,9 @@ router.post('/intent', requireAuth, ...ownerOnly, requireRecentAuth, validate(bi
 router.post('/confirm', requireAuth, ...ownerOnly, validate(billing.confirmSchema), billing.confirmCheckout);
 
 // Historial y estado: cualquier miembro del negocio puede ver.
-router.get('/payments', requireAuth, requireBusiness, billing.listPayments);
+router.get('/payments', requireAuth, ...ownerOnly, billing.listPayments);
 router.get('/config', requireAuth, billing.getBillingConfig); // clave publicable
-router.get('/payment-method', requireAuth, requireBusiness, billing.getPaymentMethod);
+router.get('/payment-method', requireAuth, ...ownerOnly, billing.getPaymentMethod);
 
 // Mutaciones de plan/pago: SOLO dueño.
 router.post('/cancel', requireAuth, ...ownerOnly, billing.cancelSubscription);

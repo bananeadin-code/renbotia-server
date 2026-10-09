@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { qualifyReferral } from '../services/referral.service.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiError } from '../utils/ApiError.js';
 import { PLANS, CREDIT_PACKS } from '../config/constants.js';
@@ -259,6 +260,7 @@ export const confirmCheckout = asyncHandler(async (req, res) => {
       amountMXN,
       reference: pi.id,
     });
+    void qualifyReferral(req.userId); // pagó: el referido cuenta
     return res.status(201).json({ success: true, data: { type: 'plan', bundle, upgraded: true } });
   }
 
@@ -306,6 +308,7 @@ export const confirmCheckout = asyncHandler(async (req, res) => {
       summary: `Compró ${pack.name}.`,
       metadata: { packKey: pack.key, amountMXN, tokens: pack.tokens },
     });
+    void qualifyReferral(req.userId); // pagó: el referido cuenta
     return res.json({ success: true, data: { type: 'credits', balance } });
   }
 

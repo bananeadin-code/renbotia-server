@@ -1,4 +1,6 @@
 import crypto from 'node:crypto';
+import { Membership } from '../models/Membership.js';
+import { Session } from '../models/Session.js';
 import { User } from '../models/User.js';
 import { Business } from '../models/Business.js';
 import { Subscription } from '../models/Subscription.js';
@@ -16,8 +18,15 @@ import { logger } from '../utils/logger.js';
  *    (se programa con pendingPlanKey, sin cobros).
  *  - Si ya pagas Pro o Elite: recibes el equivalente en créditos (el cupo
  *    mensual de Pro), que no caducan.
- * Cuenta como referido quien crea su cuenta con tu enlace y termina su registro
- * (crea su negocio). Uno mismo no cuenta.
+ * Cuenta como referido quien crea su cuenta con tu enlace Y la usa de verdad:
+ * conecta un canal real (WhatsApp, Messenger o Instagram) o paga algo. Crear un
+ * negocio vacío ya no basta (evita "invitarse" con cuentas falsas).
+ * No cuentan: uno mismo, alguien de tu propio equipo ni cuentas creadas desde tu
+ * mismo dispositivo y red.
+ *
+ * La recompensa es PERSONAL y se aplica al negocio propio de quien invitó, nunca
+ * al proyecto donde colabora. Si aún no tiene negocio, queda pendiente y se
+ * entrega cuando lo crea.
  */
 
 export const REFERRALS_PER_REWARD = 3;
@@ -59,19 +68,59 @@ export async function resolveReferrer(code) {
  */
 export async function qualifyReferral(userId) {
   try {
+    const pending = await User.findOne({ _id: userId, referredBy: { $ne: null }, referralQualifiedAt: null })
+      .select('referredBy')
+      .lean();
+    if (!pending?.referredBy || String(pending.referredBy) === String(userId)) return;
+    if (await looksLikeSelfReferral(pending.referredBy, userId)) {
+      logger.warn(`Referidos: ${userId} no cuenta para ${pending.referredBy} (mismo equipo o mismo dispositivo y red).`);
+      await User.updateOne({ _id: userId }, { $set: { referredBy: null } });
+      return;
+    }
     const user = await User.findOneAndUpdate(
-      { _id: userId, referredBy: { $ne: null }, referralQualifiedAt: null },
+      { _id: userId, referredBy: pending.referredBy, referralQualifiedAt: null },
       { $set: { referralQualifiedAt: new Date() } },
       { new: true }
-    ).select('referredBy name');
-    if (!user?.referredBy || String(user.referredBy) === String(userId)) return;
+    ).select('referredBy');
+    if (!user) return;
     await maybeReward(user.referredBy);
   } catch (err) {
     logger.warn(`Referidos: no se pudo calificar a ${userId}: ${err.message}`);
   }
 }
 
+/**
+ * ¿El "referido" es en realidad el mismo que invita o alguien de su equipo?
+ *  - es colaborador en el negocio de quien invita, o
+ *  - abrió sesión desde el mismo dispositivo (navegador+SO+país) Y la misma IP
+ *    que quien invita en los últimos 90 días.
+ */
+async function looksLikeSelfReferral(referrerId, userId) {
+  const owned = await Business.findOne({ owner: referrerId }).select('_id').lean();
+  if (owned && (await Membership.exists({ business: owned._id, user: userId }))) return true;
+  const since = new Date(Date.now() - 90 * 24 * 3600 * 1000);
+  const mine = await Session.find({ user: referrerId, createdAt: { $gte: since } }).select('deviceKey ip').lean();
+  if (!mine.length) return false;
+  const pairs = new Set(mine.filter((s) => s.deviceKey && s.ip).map((s) => `${s.deviceKey}|${s.ip}`));
+  const theirs = await Session.find({ user: userId, createdAt: { $gte: since } }).select('deviceKey ip').lean();
+  return theirs.some((s) => pairs.has(`${s.deviceKey}|${s.ip}`));
+}
+
+/** Entrega una recompensa que quedó pendiente (p. ej. al crear su negocio). */
+export async function applyPendingReward(userId) {
+  try {
+    await maybeReward(userId);
+  } catch (err) {
+    logger.warn(`Referidos: recompensa pendiente de ${userId}: ${err.message}`);
+  }
+}
+
 async function maybeReward(referrerId) {
+  // Se aplica a SU negocio propio. Sin negocio todavía: no se consume la
+  // recompensa (antes se marcaba como entregada y se perdía); se entrega al
+  // crear su negocio (applyPendingReward).
+  const ownBusiness = await Business.findOne({ owner: referrerId }).select('_id').lean();
+  if (!ownBusiness || !(await Subscription.exists({ business: ownBusiness._id }))) return;
   const qualified = await User.countDocuments({ referredBy: referrerId, referralQualifiedAt: { $ne: null } });
   const earned = Math.min(MAX_REWARDS, Math.floor(qualified / REFERRALS_PER_REWARD));
   // Reclamo atómico de la recompensa pendiente (evita darla dos veces).
@@ -83,7 +132,7 @@ async function maybeReward(referrerId) {
   if (!claim) return;
 
   const business = await Business.findOne({ owner: referrerId }).select('_id name');
-  if (!business) return; // sin negocio propio: la recompensa queda contada para cuando lo cree
+  if (!business) return;
   const sub = await Subscription.findOne({ business: business._id }).populate('plan');
   const pro = await Plan.findOne({ key: 'pro' });
   if (!sub || !pro) return;
