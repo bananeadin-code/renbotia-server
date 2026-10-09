@@ -19,7 +19,7 @@ router.get('/config', auth.getAuthConfig); // Client ID de Google (público)
 router.post('/refresh', auth.refresh);
 router.post('/logout', auth.logout);
 
-// Recuperación de contraseña (simulada, sin email real)
+// Recuperación de contraseña (enlace de un solo uso por correo)
 router.post('/forgot-password', authLimiter, validate(auth.forgotSchema), auth.forgotPassword);
 router.post('/reset-password', authLimiter, validate(auth.resetSchema), auth.resetPassword);
 
@@ -27,6 +27,10 @@ router.post('/reset-password', authLimiter, validate(auth.resetSchema), auth.res
 router.get('/me', requireAuth, auth.me);
 router.patch('/profile', requireAuth, validate(auth.updateProfileSchema), auth.updateProfile);
 router.patch('/2fa', requireAuth, validate(auth.twoFactorSchema), auth.updateTwoFactor);
+// Sesiones activas (Perfil → Seguridad): ver, cerrar una o cerrar las demás.
+router.get('/sessions', requireAuth, auth.getSessions);
+router.post('/sessions/revoke-others', requireAuth, auth.revokeOtherSessions);
+router.delete('/sessions/:id', requireAuth, auth.deleteSession);
 // Cambio de correo con re-verificación (código al correo nuevo).
 router.post('/email/request', requireAuth, authLimiter, validate(auth.requestEmailChangeSchema), auth.requestEmailChange);
 router.post('/email/verify', requireAuth, authLimiter, validate(auth.verifyEmailChangeSchema), auth.verifyEmailChange);

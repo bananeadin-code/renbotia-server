@@ -5,13 +5,9 @@ import { ApiError } from '../utils/ApiError.js';
 import { env } from '../config/env.js';
 import { sendPasswordResetEmail, sendWelcomeEmail } from './email.service.js';
 import { isDisposableEmail } from '../utils/disposableEmails.js';
-import {
-  signAccessToken,
-  signRefreshToken,
-  verifyRefreshToken,
-  signDeviceToken,
-  verifyDeviceToken,
-} from '../utils/jwt.js';
+import { verifyRefreshToken, signDeviceToken, verifyDeviceToken } from '../utils/jwt.js';
+import { startSession, rotateSession, revokeAllSessions } from './session.service.js';
+import { sendSecurityEmail } from './email.service.js';
 import { sendOtp, verifyOtp } from './otp.service.js';
 import { logger } from '../utils/logger.js';
 import { resolveReferrer } from './referral.service.js';
@@ -25,12 +21,10 @@ import { Business } from '../models/Business.js';
 const MAX_LOGIN_ATTEMPTS = 8;
 const LOCK_MINUTES = 15;
 
-function issueTokens(user) {
-  const payload = { sub: user.id, role: user.role, tv: user.tokenVersion ?? 0 };
-  return {
-    accessToken: signAccessToken(payload),
-    refreshToken: signRefreshToken(payload),
-  };
+// Cada inicio de sesión exitoso crea una sesión en servidor (ver session.service).
+async function issueTokens(user, ctx) {
+  const { accessToken, refreshToken } = await startSession({ user, ctx });
+  return { accessToken, refreshToken };
 }
 
 export async function registerUser({ name, email, password, ref }) {
@@ -56,7 +50,8 @@ export async function registerUser({ name, email, password, ref }) {
   return { needsEmailVerification: true, email: user.email, ...otp };
 }
 
-export async function loginUser({ email, password, deviceToken, ip }) {
+export async function loginUser({ email, password, deviceToken, ctx = {} }) {
+  const ip = ctx.ip;
   // passwordHash tiene select:false → hay que pedirlo explícitamente
   const user = await User.findOne({ email }).select('+passwordHash +googleId');
   if (!user) {
@@ -87,6 +82,15 @@ export async function loginUser({ email, password, deviceToken, ip }) {
     if (user.failedLoginAttempts >= MAX_LOGIN_ATTEMPTS) {
       user.lockUntil = new Date(Date.now() + LOCK_MINUTES * 60 * 1000);
       logger.warn(`Auth: cuenta BLOQUEADA por ${MAX_LOGIN_ATTEMPTS} intentos — ${email} ip=${ip || '?'}`);
+      // Aviso al dueño de la cuenta: si no fue él, alguien intenta adivinar su contraseña.
+      void sendSecurityEmail({
+        kind: 'account_locked',
+        to: user.email,
+        customerName: user.name,
+        minutes: LOCK_MINUTES,
+        url: `${env.publicUrl.replace(/\/$/, '')}/dashboard/perfil#sesiones`,
+        resetUrl: `${env.publicUrl.replace(/\/$/, '')}/recuperar`,
+      });
     } else {
       logger.warn(`Auth: login fallido (${user.failedLoginAttempts}/${MAX_LOGIN_ATTEMPTS}) — ${email} ip=${ip || '?'}`);
     }
@@ -113,7 +117,7 @@ export async function loginUser({ email, password, deviceToken, ip }) {
     return { needs2fa: true, email: user.email, ...otp };
   }
 
-  const tokens = issueTokens(user);
+  const tokens = await issueTokens(user, ctx);
   return { user, ...tokens };
 }
 
@@ -131,7 +135,7 @@ function isDeviceRemembered(deviceToken, userId) {
 /**
  * Confirma el correo con el código y deja la cuenta activa (e inicia sesión).
  */
-export async function verifyEmailAndLogin({ email, code }) {
+export async function verifyEmailAndLogin({ email, code, ctx = {} }) {
   const user = await User.findOne({ email });
   if (!user) throw ApiError.badRequest('No encontramos esa cuenta.');
   await verifyOtp({ userId: user._id, purpose: 'verify_email', code });
@@ -141,7 +145,7 @@ export async function verifyEmailAndLogin({ email, code }) {
     // Bienvenida (cálida) al activar la cuenta. Fail-open, no bloquea el login.
     void sendWelcomeEmail({ to: user.email, customerName: user.name });
   }
-  const tokens = issueTokens(user);
+  const tokens = await issueTokens(user, ctx);
   return { user, ...tokens };
 }
 
@@ -149,11 +153,11 @@ export async function verifyEmailAndLogin({ email, code }) {
  * Verifica el 2FA del login y emite sesión. Si rememberDevice, devuelve además
  * un deviceToken para que el controlador lo fije como cookie (salta 2FA 60 días).
  */
-export async function verify2faAndLogin({ email, code, rememberDevice }) {
+export async function verify2faAndLogin({ email, code, rememberDevice, ctx = {} }) {
   const user = await User.findOne({ email });
   if (!user) throw ApiError.badRequest('No encontramos esa cuenta.');
   await verifyOtp({ userId: user._id, purpose: 'login_2fa', code });
-  const tokens = issueTokens(user);
+  const tokens = await issueTokens(user, ctx);
   const deviceToken = rememberDevice ? signDeviceToken(user._id) : null;
   return { user, ...tokens, deviceToken };
 }
@@ -221,7 +225,7 @@ function getGoogleClient() {
  * Si el correo ya tiene cuenta, la vincula; si no, crea una cuenta sin contraseña.
  * @param {string} credential - ID token JWT emitido por Google Identity Services
  */
-export async function googleAuth(credential, ref) {
+export async function googleAuth(credential, ref, ctx = {}) {
   const client = getGoogleClient();
   let payload;
   try {
@@ -262,37 +266,30 @@ export async function googleAuth(credential, ref) {
     }
   }
 
-  return { user, ...issueTokens(user) };
-}
-
-export async function refreshTokens(refreshToken) {
-  if (!refreshToken) {
-    throw ApiError.unauthorized('Falta el refresh token');
-  }
-
-  const payload = verifyRefreshToken(refreshToken); // lanza si inválido/expirado
-  const user = await User.findById(payload.sub);
-  if (!user) {
-    throw ApiError.unauthorized('El usuario ya no existe');
-  }
-  // Si el tokenVersion no coincide, el refresh es anterior a un cambio de
-  // contraseña → ya no vale (sesión invalidada).
-  if ((payload.tv ?? 0) !== (user.tokenVersion ?? 0)) {
-    throw ApiError.unauthorized('Sesión expirada, inicia sesión de nuevo');
-  }
-
-  return issueTokens(user);
+  return { user, ...(await issueTokens(user, ctx)) };
 }
 
 /**
- * Recuperación de contraseña SIMULADA: genera un token de reset y lo devuelve
- * directamente (en producción se enviaría por email). Sirve para mostrar el flujo.
+ * Renueva la sesión con el refresh token: valida firma y vigencia, y delega en
+ * la sesión de servidor (rotación del jti, inactividad, detección de robo).
+ */
+export async function refreshTokens(refreshToken, ctx = {}) {
+  if (!refreshToken) {
+    throw ApiError.unauthorized('Falta el refresh token');
+  }
+  const payload = verifyRefreshToken(refreshToken); // lanza si inválido/expirado
+  return rotateSession(payload, ctx);
+}
+
+/**
+ * Recuperación de contraseña: genera un token de un solo uso (se guarda su hash)
+ * y lo envía por correo. Nunca se devuelve en la respuesta de la API.
  */
 export async function requestPasswordReset(email) {
   const user = await User.findOne({ email });
   // No revelamos si el email existe o no (buena práctica anti-enumeración).
   if (!user) {
-    return { resetToken: null, simulated: true };
+    return { sent: true };
   }
 
   const rawToken = crypto.randomBytes(32).toString('hex');
@@ -305,8 +302,7 @@ export async function requestPasswordReset(email) {
   const link = `${env.publicUrl.replace(/\/$/, '')}/restablecer?token=${rawToken}`;
   await sendPasswordResetEmail({ to: user.email, customerName: user.name, link, minutes: 30 });
 
-  // En desarrollo devolvemos también el token para probar sin correo real.
-  return { resetToken: rawToken, simulated: false };
+  return { sent: true };
 }
 
 export async function resetPassword({ token, password }) {
@@ -329,6 +325,7 @@ export async function resetPassword({ token, password }) {
   user.failedLoginAttempts = 0;
   user.lockUntil = undefined;
   await user.save();
+  await revokeAllSessions(user._id, { reason: 'password_reset' });
   // Seguridad: también se desvinculan sus números de WhatsApp de dueño.
   await Business.updateMany({ owner: user._id }, { $set: { ownerWhatsApp: [], 'ownerPending.action': '' } });
   logger.info(`Auth: contraseña restablecida, sesiones invalidadas — userId=${user.id}`);

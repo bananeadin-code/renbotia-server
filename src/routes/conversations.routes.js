@@ -19,5 +19,6 @@ router.post('/:id/summary', conversations.summarizeConv);
 router.post('/:id/template', validate(conversations.templateSchema), conversations.sendTemplateReply);
 router.post('/:id/rate', validate(conversations.rateSchema), conversations.rateMessage);
 router.get('/:id/files/:fileId', conversations.downloadAttachment); // PDF que envió el cliente
+router.post('/:id/block', validate(conversations.blockSchema), conversations.blockContact); // bloquear contacto
 
 export default router;

@@ -10,6 +10,7 @@ import { contactEmail } from '../emails/contact.js';
 import { weeklyReportEmail } from '../emails/weeklyReport.js';
 import { referralRewardEmail } from '../emails/referralReward.js';
 import { renewalEmail } from '../emails/renewal.js';
+import { securityEmail } from '../emails/security.js';
 import { User } from '../models/User.js';
 
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
@@ -264,6 +265,22 @@ export async function sendRenewalNoticeEmail(p) {
     return await sendEmail({ to, subject, html });
   } catch (err) {
     logger.warn(`[email] No se pudo enviar el aviso de renovación: ${err.message}`);
+    return { ok: false, error: err.message };
+  }
+}
+
+/**
+ * Avisos de seguridad de la cuenta (nuevo inicio de sesión, sesión copiada,
+ * cuenta bloqueada). Fail-open: nunca rompe el inicio de sesión.
+ * @param {object} p ver emails/security.js (+ `to`)
+ */
+export async function sendSecurityEmail(p) {
+  try {
+    if (!p.to) return { skipped: true };
+    const { subject, html } = securityEmail(p);
+    return await sendEmail({ to: p.to, subject, html });
+  } catch (err) {
+    logger.warn(`[email] No se pudo enviar el aviso de seguridad: ${err.message}`);
     return { ok: false, error: err.message };
   }
 }

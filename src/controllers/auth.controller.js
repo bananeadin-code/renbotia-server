@@ -4,6 +4,9 @@ import * as authService from '../services/auth.service.js';
 import { deleteAccount as deleteAccountService } from '../services/account.service.js';
 import { User } from '../models/User.js';
 import { env, isProd } from '../config/env.js';
+import { requestContext, revokeSession, revokeAllSessions, listSessions } from '../services/session.service.js';
+import { verifyRefreshToken } from '../utils/jwt.js';
+import { ApiError } from '../utils/ApiError.js';
 
 /**
  * Esquemas de validación (Zod). Se exportan para usarse en las rutas.
@@ -80,7 +83,7 @@ export const register = asyncHandler(async (req, res) => {
 
 export const login = asyncHandler(async (req, res) => {
   const deviceToken = req.cookies?.deviceToken;
-  const result = await authService.loginUser({ ...req.body, deviceToken, ip: req.ip });
+  const result = await authService.loginUser({ ...req.body, deviceToken, ctx: requestContext(req) });
   // Estados intermedios: falta verificar correo o falta el 2FA. Sin sesión aún.
   if (result.needsEmailVerification || result.needs2fa) {
     return res.json({ success: true, data: result });
@@ -90,13 +93,13 @@ export const login = asyncHandler(async (req, res) => {
 
 /** Confirma el correo con el código (registro) e inicia sesión. */
 export const verifyEmail = asyncHandler(async (req, res) => {
-  const result = await authService.verifyEmailAndLogin(req.body);
+  const result = await authService.verifyEmailAndLogin({ ...req.body, ctx: requestContext(req) });
   sendAuthResponse(res, result);
 });
 
 /** Verifica el 2FA del login; si rememberDevice, fija la cookie de dispositivo. */
 export const verify2fa = asyncHandler(async (req, res) => {
-  const result = await authService.verify2faAndLogin(req.body);
+  const result = await authService.verify2faAndLogin({ ...req.body, ctx: requestContext(req) });
   if (result.deviceToken) {
     res.cookie('deviceToken', result.deviceToken, deviceCookieOptions);
   }
@@ -136,7 +139,7 @@ export const googleSchema = z.object({
 });
 
 export const googleAuth = asyncHandler(async (req, res) => {
-  const result = await authService.googleAuth(req.body.credential, req.body.ref);
+  const result = await authService.googleAuth(req.body.credential, req.body.ref, requestContext(req));
   sendAuthResponse(res, result);
 });
 
@@ -150,14 +153,50 @@ export const getAuthConfig = asyncHandler(async (req, res) => {
 
 export const refresh = asyncHandler(async (req, res) => {
   const token = req.cookies?.refreshToken;
-  const tokens = await authService.refreshTokens(token);
-  res.cookie('refreshToken', tokens.refreshToken, refreshCookieOptions);
-  res.json({ success: true, data: { accessToken: tokens.accessToken } });
+  try {
+    const tokens = await authService.refreshTokens(token, requestContext(req));
+    res.cookie('refreshToken', tokens.refreshToken, refreshCookieOptions);
+    res.json({ success: true, data: { accessToken: tokens.accessToken } });
+  } catch (err) {
+    // Sesión muerta o robada: se borra la cookie para no reintentar con ella.
+    res.clearCookie('refreshToken', { path: '/api/auth' });
+    throw err;
+  }
 });
 
+/** Cierra ESTA sesión de verdad (se revoca en el servidor, no solo la cookie). */
 export const logout = asyncHandler(async (req, res) => {
+  const token = req.cookies?.refreshToken;
+  if (token) {
+    try {
+      const payload = verifyRefreshToken(token);
+      if (payload.sid) await revokeSession(payload.sid, 'logout');
+    } catch {
+      /* cookie inválida o vencida: igual se borra */
+    }
+  }
   res.clearCookie('refreshToken', { path: '/api/auth' });
   res.json({ success: true, message: 'Sesión cerrada' });
+});
+
+/** GET /api/auth/sessions — sesiones activas del usuario (marca la actual). */
+export const getSessions = asyncHandler(async (req, res) => {
+  res.json({ success: true, data: { sessions: await listSessions(req.userId, req.sessionId) } });
+});
+
+/** DELETE /api/auth/sessions/:id — cierra una sesión propia. */
+export const deleteSession = asyncHandler(async (req, res) => {
+  const { Session } = await import('../models/Session.js');
+  const own = await Session.exists({ _id: req.params.id, user: req.userId });
+  if (!own) throw ApiError.notFound('Sesión no encontrada');
+  await revokeSession(req.params.id, 'user');
+  res.json({ success: true, data: { current: String(req.params.id) === String(req.sessionId) } });
+});
+
+/** POST /api/auth/sessions/revoke-others — cierra todas las demás sesiones. */
+export const revokeOtherSessions = asyncHandler(async (req, res) => {
+  const closed = await revokeAllSessions(req.userId, { exceptId: req.sessionId, reason: 'others' });
+  res.json({ success: true, data: { closed } });
 });
 
 export const me = asyncHandler(async (req, res) => {
@@ -195,11 +234,8 @@ export const forgotPassword = asyncHandler(async (req, res) => {
   res.json({
     success: true,
     message: 'Si el email existe, te enviamos un enlace para restablecer tu contraseña.',
-    // En desarrollo devolvemos el token para poder probar el flujo sin correo real.
-    ...(env.nodeEnv !== 'production' && result.resetToken
-      ? { data: { resetToken: result.resetToken } }
-      : {}),
   });
+  void result;
 });
 
 export const resetPassword = asyncHandler(async (req, res) => {

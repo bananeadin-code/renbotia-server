@@ -1,4 +1,7 @@
 import { Subscription } from '../models/Subscription.js';
+import { CUSTOMER_DAILY_CAP, customerMessagesToday } from '../utils/blocklist.js';
+
+const CAP_REASON = 'Este cliente superó el límite diario de mensajes';
 import { ChatAttachment } from '../models/ChatAttachment.js';
 import { MAX_DOC_PAGES } from '../utils/document.js';
 import { BotConfig } from '../models/BotConfig.js';
@@ -141,6 +144,39 @@ export async function processMessage({
       data: Buffer.from(document.data, 'base64'),
     });
     inboundFiles = [{ id: att._id, name: att.name, mime: att.mime, size: att.size }];
+  }
+
+  // Tope diario por cliente (WhatsApp, Messenger, Instagram): alguien que manda
+  // cientos de mensajes no vacía los créditos del negocio. Se guarda su mensaje,
+  // el bot no responde, y la conversación queda marcada para que el equipo la vea.
+  if (['whatsapp', 'facebook', 'instagram'].includes(channel) && !chat.isNew) {
+    if (customerMessagesToday(chat) >= CUSTOMER_DAILY_CAP) {
+      const first = chat.attentionReason !== CAP_REASON;
+      chat.messages.push({ role: 'user', content: userText, images: inboundImages, files: inboundFiles, timestamp: new Date() });
+      chat.needsAttention = true;
+      chat.attentionReason = CAP_REASON;
+      await chat.save();
+      if (first) {
+        logger.warn(`Tope diario por cliente alcanzado (negocio ${businessId}, chat ${chat._id}).`);
+        void sendEscalationEmail({
+          userId: business?.owner,
+          businessName: business?.name,
+          reason: `${CAP_REASON}. El bot dejó de responderle por hoy para cuidar tus créditos. Si es un cliente real, contéstale tú; si es spam, bloquéalo desde la bandeja.`,
+          contactName: chat.customerName || '',
+          preview: userText.slice(0, 160),
+        });
+      }
+      return {
+        reply: null,
+        paused: true,
+        pauseReason: 'customer_cap',
+        chatId: chat._id,
+        balance: computeBalance(subscription),
+        usage: { charged: 0 },
+        createdRecords: [],
+        sentImages: [],
+      };
+    }
   }
 
   // Relevo humano: si una persona tomó el control (modo manual), si el canal está

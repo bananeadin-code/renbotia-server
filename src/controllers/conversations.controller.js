@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isBlocked, contactIdOf } from '../utils/blocklist.js';
 import { bodyParameters, renderTemplate, fillPlaceholders } from '../utils/waTemplate.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiError } from '../utils/ApiError.js';
@@ -105,10 +106,54 @@ export const listConversations = asyncHandler(async (req, res) => {
 export const getConversation = asyncHandler(async (req, res) => {
   const chat = await ChatSimulation.findOne({ _id: req.params.id, business: req.businessId }).lean();
   if (!chat) throw ApiError.notFound('Conversación no encontrada');
+  const biz = await Business.findById(req.businessId).select('blockedContacts').lean();
   res.json({
     success: true,
-    data: { conversation: chat, whatsappWindow: computeServiceWindow(chat) },
+    data: {
+      conversation: chat,
+      whatsappWindow: computeServiceWindow(chat),
+      blocked: chat.channel !== 'simulator' && isBlocked(biz, chat.channel, contactIdOf(chat)),
+    },
   });
+});
+
+export const blockSchema = z.object({ blocked: z.boolean() });
+
+/**
+ * POST /api/conversations/:id/block — bloquea o desbloquea al cliente de esta
+ * conversación. Bloqueado, el bot ignora sus mensajes (no se guardan ni gastan
+ * créditos) en ese canal.
+ */
+export const blockContact = asyncHandler(async (req, res) => {
+  const chat = await ChatSimulation.findOne({ _id: req.params.id, business: req.businessId })
+    .select('channel customerPhone customerId customerName')
+    .lean();
+  if (!chat) throw ApiError.notFound('Conversación no encontrada');
+  if (chat.channel === 'simulator') throw ApiError.badRequest('Las pruebas del simulador no se bloquean.');
+  const id = contactIdOf(chat);
+  if (!id) throw ApiError.badRequest('No se pudo identificar al contacto.');
+
+  if (req.body.blocked) {
+    const biz = await Business.findById(req.businessId).select('blockedContacts');
+    if ((biz.blockedContacts || []).length >= 500) {
+      throw ApiError.badRequest('Llegaste al máximo de 500 contactos bloqueados. Desbloquea alguno primero.');
+    }
+    await Business.updateOne(
+      { _id: req.businessId, blockedContacts: { $not: { $elemMatch: { channel: chat.channel, id } } } },
+      { $push: { blockedContacts: { channel: chat.channel, id, name: chat.customerName || '', by: req.userId } } }
+    );
+  } else {
+    await Business.updateOne({ _id: req.businessId }, { $pull: { blockedContacts: { channel: chat.channel, id } } });
+  }
+  // Al bloquear deja de "pedir atención" (no es alguien a quien haya que contestar).
+  if (req.body.blocked) await ChatSimulation.updateOne({ _id: chat._id }, { $set: { needsAttention: false } });
+  void logAudit({
+    businessId: req.businessId,
+    userId: req.userId,
+    action: req.body.blocked ? 'contact.block' : 'contact.unblock',
+    summary: `${req.body.blocked ? 'Bloqueó' : 'Desbloqueó'} al contacto ${chat.customerName || id} (${chat.channel}).`,
+  });
+  res.json({ success: true, data: { blocked: req.body.blocked } });
 });
 
 export const updateConversationSchema = z.object({

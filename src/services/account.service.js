@@ -20,6 +20,7 @@ import { Subscription } from '../models/Subscription.js';
 import { UsageLog } from '../models/UsageLog.js';
 import { AuditLog } from '../models/AuditLog.js';
 import { EmailOtp } from '../models/EmailOtp.js';
+import { Session } from '../models/Session.js';
 import { Waitlist } from '../models/Waitlist.js';
 
 /**
@@ -111,6 +112,7 @@ export async function deleteAccount({ userId, password, confirm }) {
 
   // Datos ligados directamente al usuario (no a un negocio).
   await EmailOtp.deleteMany({ user: userId });
+  await Session.deleteMany({ user: userId }); // sesiones e historial de dispositivos
   await Payment.deleteMany({ user: userId });
   await Waitlist.deleteMany({ email: user.email });
 

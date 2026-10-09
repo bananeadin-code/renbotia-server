@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { isBlocked } from '../utils/blocklist.js';
 import { z } from 'zod';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiError } from '../utils/ApiError.js';
@@ -287,6 +288,9 @@ export const publicMessage = asyncHandler(async (req, res) => {
   if (!business) throw notAvailable();
   const { sessionId, message, after, host, contact, file } = req.body;
   if (!hostAllowed(business, host)) throw notAvailable();
+  if (isBlocked(business, 'web', sessionId)) {
+    throw new ApiError(403, 'No podemos atenderte por este medio.', { code: 'BLOCKED' });
+  }
   const { image, document } = await parseVisitorFile(business, file);
 
   const existing = await findSessionChat(business._id, sessionId);

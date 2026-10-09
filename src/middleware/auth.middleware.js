@@ -2,6 +2,7 @@ import { verifyAccessToken } from '../utils/jwt.js';
 import { ApiError } from '../utils/ApiError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { User } from '../models/User.js';
+import { assertSessionActive } from '../services/session.service.js';
 
 /**
  * Verifica el access token del header `Authorization: Bearer <token>`.
@@ -27,7 +28,14 @@ export const requireAuth = asyncHandler(async (req, res, next) => {
     throw ApiError.unauthorized('Sesión expirada, inicia sesión de nuevo');
   }
 
+  // Sesión en servidor: si se cerró (logout, "cerrar las demás", robo
+  // detectado, contraseña restablecida), el acceso se corta en segundos aunque
+  // el access token aún no venza. Los tokens previos a esta función no traen
+  // sid y vencen solos en 15 min.
+  if (payload.sid) await assertSessionActive(payload.sid, user._id);
+
   req.user = user;
   req.userId = user.id;
+  req.sessionId = payload.sid || null;
   next();
 });

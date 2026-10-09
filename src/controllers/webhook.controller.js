@@ -1,4 +1,5 @@
 import { env } from '../config/env.js';
+import { isBlocked } from '../utils/blocklist.js';
 import { logger } from '../utils/logger.js';
 import { Business } from '../models/Business.js';
 import { ChatSimulation } from '../models/ChatSimulation.js';
@@ -146,6 +147,8 @@ async function handleMessage({ business, phoneNumberId, msg, customerName }) {
   if (alreadyProcessed(msg.id)) return;
 
   const from = msg.from; // wa_id del cliente (solo dígitos)
+  // Contacto bloqueado por el negocio: se ignora (sin guardar ni gastar créditos).
+  if (isBlocked(business, 'whatsapp', from) && !ownerEntry(business, from)) return;
 
   // Control del dueño: código de vinculación "RB-XXXXXXXX" o mensaje de un número
   // de dueño ya vinculado. Nunca pasan al bot de clientes (salvo "modo cliente").
@@ -350,6 +353,7 @@ async function handleDmMessage({ business, event, channel, pageToken }) {
 
   const senderId = event.sender?.id; // PSID / IGSID del cliente
   if (!senderId) return;
+  if (isBlocked(business, channel, senderId)) return; // contacto bloqueado
 
   let text = (msg.text || '').trim();
   let image = null;

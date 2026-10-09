@@ -101,6 +101,23 @@ const businessSchema = new mongoose.Schema(
         iceBreakers: { type: [String], default: [] },
       },
     },
+    // ── Contactos bloqueados ──
+    // El bot ignora por completo sus mensajes (no se guardan ni gastan créditos).
+    // channel + id = wa_id (WhatsApp), PSID (Messenger), IGSID (Instagram) o la
+    // sesión del chat del sitio (web).
+    blockedContacts: {
+      type: [
+        {
+          _id: false,
+          channel: { type: String, enum: ['whatsapp', 'facebook', 'instagram', 'web'], required: true },
+          id: { type: String, required: true },
+          name: { type: String, default: '' },
+          at: { type: Date, default: Date.now },
+          by: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+        },
+      ],
+      default: [],
+    },
     // ── Control del dueño desde WhatsApp ──
     // Números personales (wa_id) del DUEÑO vinculados con un código de un solo uso
     // enviado desde ese número al bot. Máx. 2. lastUsedAt: si pasan 30 días sin
