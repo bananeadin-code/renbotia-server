@@ -8,6 +8,7 @@ import {
   updateRecord,
   deleteRecord,
   getStats,
+  recordScope,
 } from '../services/management.service.js';
 import { getAvailableSlots, getAvailabilityRange } from '../services/availability.service.js';
 import { ManagedRecord } from '../models/ManagedRecord.js';
@@ -77,8 +78,8 @@ export const updateRecordSchema = z.object({
 });
 
 export const listRecordsHandler = asyncHandler(async (req, res) => {
-  const { type, status, scope } = req.query;
-  const records = await listRecords(req.businessId, { type, status, scope });
+  const { type, status, scope, channel } = req.query;
+  const records = await listRecords(req.businessId, { type, status, scope, channel }, req.access);
   res.json({ success: true, data: { records } });
 });
 
@@ -90,12 +91,12 @@ export const createRecordHandler = asyncHandler(async (req, res) => {
 });
 
 export const updateRecordHandler = asyncHandler(async (req, res) => {
-  const record = await updateRecord(req.businessId, req.params.id, req.body);
+  const record = await updateRecord(req.businessId, req.params.id, req.body, req.access);
   res.json({ success: true, data: { record } });
 });
 
 export const deleteRecordHandler = asyncHandler(async (req, res) => {
-  await deleteRecord(req.businessId, req.params.id);
+  await deleteRecord(req.businessId, req.params.id, req.access);
   res.json({ success: true, data: { deleted: true } });
 });
 
@@ -113,13 +114,15 @@ export const availabilityHandler = asyncHandler(async (req, res) => {
 });
 
 export const statsHandler = asyncHandler(async (req, res) => {
-  const stats = await getStats(req.businessId);
+  const stats = await getStats(req.businessId, req.access);
   res.json({ success: true, data: { stats } });
 });
 
+const CHANNEL_LABEL = { whatsapp: 'WhatsApp', facebook: 'Messenger', instagram: 'Instagram', web: 'Sitio web', simulator: 'Simulador' };
+
 /** GET /api/management/export — descarga los registros (leads/trabajo) en CSV. */
 export const exportRecords = asyncHandler(async (req, res) => {
-  const records = await ManagedRecord.find({ business: req.businessId })
+  const records = await ManagedRecord.find({ business: req.businessId, ...recordScope(req.access) })
     .sort({ createdAt: -1 })
     .limit(5000)
     .lean();
@@ -135,6 +138,7 @@ export const exportRecords = asyncHandler(async (req, res) => {
     { label: 'Resumen', get: (r) => r.summary || '' },
     { label: 'Notas', get: (r) => r.notes || '' },
     { label: 'Origen', get: (r) => r.source || '' },
+    { label: 'Canal', get: (r) => CHANNEL_LABEL[r.channel] || (r.source === 'manual' ? 'Manual' : '') },
   ]);
 
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');

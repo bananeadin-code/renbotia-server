@@ -48,6 +48,16 @@ const managedRecordSchema = new mongoose.Schema(
     source: { type: String, enum: ['bot', 'manual'], default: 'manual', index: true },
     // Conversación del simulador que lo generó (si vino del bot).
     chat: { type: mongoose.Schema.Types.ObjectId, ref: 'ChatSimulation', default: null },
+    // Canal de la conversación que lo generó (registros del bot). null = alta
+    // manual. Sirve para mostrarlo y para limitar por canal según el rol (IAM).
+    channel: {
+      type: String,
+      enum: ['whatsapp', 'facebook', 'instagram', 'web', 'simulator'],
+      default: null,
+      index: true,
+    },
+    // El relleno del canal ya revisó este registro (su conversación ya no existía).
+    channelChecked: { type: Boolean, default: undefined, select: false },
   },
   { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } }
 );

@@ -9,6 +9,7 @@ import { startWeeklyReportScheduler } from './services/weeklyReport.service.js';
 import { startRenewalScheduler } from './services/renewal.service.js';
 import { encryptLegacySecrets } from './services/encryptSecrets.service.js';
 import { syncPlans } from './services/syncPlans.service.js';
+import { backfillRecordChannels } from './services/management.service.js';
 
 /**
  * Punto de entrada: conecta a la base de datos y arranca el servidor HTTP.
@@ -22,6 +23,9 @@ async function start() {
 
   // Cifra tokens de Página guardados en claro (idempotente, no bloquea el arranque).
   encryptLegacySecrets().catch((err) => logger.error(`Cifrado de tokens: ${err.message}`));
+
+  // Canal de origen en registros de Gestión anteriores (idempotente, no bloquea).
+  backfillRecordChannels().catch((err) => logger.error(`Canal de registros: ${err.message}`));
 
   const app = createApp();
 

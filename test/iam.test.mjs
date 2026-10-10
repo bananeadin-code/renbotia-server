@@ -130,4 +130,46 @@ describe('IAM: roles, módulos y canales', () => {
     const inv = await Invitation.findOne({ business: owner.business._id, email: 'nueva@test.dev' });
     assert.equal(inv.roleKey, 'readonly');
   });
+
+  it('Gestión: registros con su canal; un rol limitado a WhatsApp solo ve los suyos y los manuales', async () => {
+    const { owner, TM } = await team({
+      roleKey: 'custom',
+      access: { modules: { management: 'edit' }, channels: ['whatsapp'] },
+    });
+    const elite = await Plan.findOne({ key: 'elite' });
+    await Subscription.updateOne({ business: owner.business._id }, { $set: { plan: elite._id } });
+    const { ManagedRecord } = await import('../src/models/ManagedRecord.js');
+    const { createRecord, backfillRecordChannels } = await import('../src/services/management.service.js');
+    const biz = owner.business._id;
+
+    const wa = await ChatSimulation.create({ business: biz, channel: 'whatsapp', customerPhone: '5215550001', messages: [] });
+    const ig = await ChatSimulation.create({ business: biz, channel: 'instagram', customerId: 'IG2', messages: [] });
+    // El bot guarda el canal de la conversación de origen.
+    const rWa = await createRecord(biz, { type: 'prospecto', summary: 'Por WhatsApp' }, { source: 'bot', chat: wa._id });
+    const rIg = await createRecord(biz, { type: 'prospecto', summary: 'Por Instagram' }, { source: 'bot', chat: ig._id });
+    const rMan = await createRecord(biz, { type: 'prospecto', summary: 'A mano' }, { source: 'manual' });
+    assert.equal(rWa.channel, 'whatsapp');
+    assert.equal(rIg.channel, 'instagram');
+    assert.equal(rMan.channel, null);
+
+    const [sl, jl] = await req('GET', '/management/records', TM);
+    assert.equal(sl, 200);
+    const names = jl.data.records.map((r) => r.summary).sort();
+    assert.deepEqual(names, ['A mano', 'Por WhatsApp']);
+    const [, js] = await req('GET', '/management/stats', TM);
+    assert.equal(js.data.stats.total, 2, 'las métricas también respetan el canal');
+    assert.equal(js.data.stats.byBot, 1);
+    // Ni editar ni borrar uno de otro canal (no existe para su rol).
+    assert.equal((await req('PATCH', `/management/records/${rIg._id}`, TM, { status: 'confirmado' }))[0], 404);
+    assert.equal((await req('DELETE', `/management/records/${rIg._id}`, TM))[0], 404);
+    assert.equal((await req('PATCH', `/management/records/${rWa._id}`, TM, { status: 'confirmado' }))[0], 200);
+    // Filtro por canal desde la UI.
+    const [, jf] = await req('GET', '/management/records?channel=manual', TM);
+    assert.deepEqual(jf.data.records.map((r) => r.summary), ['A mano']);
+
+    // Registros anteriores sin canal: se rellena desde su conversación.
+    await ManagedRecord.updateOne({ _id: rIg._id }, { $set: { channel: null } });
+    await backfillRecordChannels();
+    assert.equal((await ManagedRecord.findById(rIg._id).lean()).channel, 'instagram');
+  });
 });
