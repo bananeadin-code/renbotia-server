@@ -22,6 +22,7 @@ import { sanitizeBotConfigForPlan } from '../utils/planGating.js';
 import { MODEL_BY_PLAN } from '../config/constants.js';
 import { botAvailability, describeSchedule } from '../utils/botAvailability.js';
 import { recordSuggestion } from './learning.service.js';
+import { pendingReminderFor, buildReminderTool, reminderNote, answerReminder } from './reminder.service.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 
@@ -263,6 +264,13 @@ export async function processMessage({
   const tools = [buildEscalationTool(), buildHotLeadTool()];
   if (managementConfig) tools.push(...buildTools(managementConfig));
   if (imagesForBot.length) tools.push(buildImageTool(imagesForBot));
+  // Recordatorio de cita sin respuesta en esta conversación: el cliente puede
+  // confirmar, cancelar o pedir cambio (solo canales reales).
+  const pendingReminder = source !== 'simulator' ? await pendingReminderFor(businessId, chat._id) : null;
+  if (pendingReminder) {
+    tools.push(buildReminderTool());
+    system += reminderNote(pendingReminder, managementConfig?.timezone || safeConfig.schedule?.timezone || 'America/Mexico_City');
+  }
 
   let text, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, totalTokens, billableTokens;
   const createdRecords = [];
@@ -294,6 +302,14 @@ export async function processMessage({
               'Anotado como lead con alta intención para dar seguimiento. Sigue atendiendo al ' +
               'cliente con normalidad, sin mencionarle esta marca.',
           };
+        }
+        if (name === 'responder_recordatorio' && pendingReminder) {
+          const r = await answerReminder(pendingReminder, input?.respuesta, input?.comentario);
+          if (r.escalate) {
+            escalation.flagged = true;
+            escalation.reason = r.escalate;
+          }
+          return r.result;
         }
         if (name === 'enviar_imagen') {
           const { result, image } = executeImageTool(input, imagesForBot);

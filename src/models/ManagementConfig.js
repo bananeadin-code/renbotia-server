@@ -49,6 +49,18 @@ const managementConfigSchema = new mongoose.Schema(
     timezone: { type: String, default: DEFAULT_MANAGEMENT_CONFIG.timezone },
     // Instrucciones extra para el bot sobre cómo captar trabajo (opcional).
     instructions: { type: String, default: '', maxlength: 2000 },
+    // Recordatorios de citas/reservaciones con confirmación del cliente.
+    reminders: {
+      enabled: { type: Boolean, default: false },
+      hoursBefore: { type: Number, default: 24, enum: [2, 4, 12, 24, 48] },
+      // Plantilla de WhatsApp para cuando ya pasaron 24 h desde que escribió el cliente.
+      template: {
+        name: { type: String, default: '' },
+        language: { type: String, default: '' },
+        // Valor de cada variable: texto con marcadores {nombre} {fecha} {hora} {servicio} {negocio}.
+        params: { type: [String], default: [] },
+      },
+    },
   },
   { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } }
 );

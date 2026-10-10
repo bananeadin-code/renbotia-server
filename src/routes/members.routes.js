@@ -24,14 +24,8 @@ router.post(
 );
 router.delete('/invite/:id', requireBusiness, requireAccess('team', 'edit'), members.cancelInvitation);
 router.delete('/:userId', requireBusiness, requireAccess('team', 'edit'), requireRecentAuth, members.removeMember);
-router.patch(
-  '/:userId/permissions',
-  requireBusiness,
-  requireAccess('team', 'edit'),
-  requireRecentAuth,
-  validate(members.permissionsSchema),
-  members.updatePermissions
-);
+// (Los 4 permisos de antes se retiraron: ahora todo es por rol. Los datos viejos
+// se siguen leyendo con legacyAccess, sin migración.)
 
 // Sesiones de cada colaborador en este negocio (el dueño las ve y las cierra).
 router.get('/:userId/sessions', requireBusiness, requireAccess('team', 'edit'), members.listMemberSessions);

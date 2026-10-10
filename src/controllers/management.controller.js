@@ -36,6 +36,19 @@ export const updateConfigSchema = z.object({
   schedule: z.array(daySchema).length(7).optional(),
   blackoutDates: z.array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).optional(),
   instructions: z.string().max(2000).optional(),
+  reminders: z
+    .object({
+      enabled: z.boolean(),
+      hoursBefore: z.union([z.literal(2), z.literal(4), z.literal(12), z.literal(24), z.literal(48)]),
+      template: z
+        .object({
+          name: z.string().max(512).regex(/^[a-z0-9_]*$/, 'Nombre de plantilla no válido'),
+          language: z.string().max(15),
+          params: z.array(z.string().max(300)).max(10),
+        })
+        .optional(),
+    })
+    .optional(),
 });
 
 export const getConfig = asyncHandler(async (req, res) => {

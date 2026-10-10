@@ -56,6 +56,14 @@ const managedRecordSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+    // Recordatorio al cliente: sending | sent | confirmed | cancelled | reschedule | skipped.
+    reminder: {
+      status: { type: String, default: '' },
+      sentAt: { type: Date, default: null },
+      via: { type: String, default: '' }, // text | template
+      answeredAt: { type: Date, default: null },
+      note: { type: String, default: '' },
+    },
     // El relleno del canal ya revisó este registro (su conversación ya no existía).
     channelChecked: { type: Boolean, default: undefined, select: false },
   },

@@ -427,33 +427,3 @@ export const deleteCustomRole = asyncHandler(async (req, res) => {
   res.json({ success: true, data: { roles: rolesCatalog(business), moved: moved.modifiedCount } });
 });
 
-export const permissionsSchema = z.object({
-  simulator: z.boolean().optional(),
-  training: z.boolean().optional(),
-  profile: z.boolean().optional(),
-  connections: z.boolean().optional(),
-});
-
-/** PATCH /api/members/:userId/permissions — el dueño da o quita permisos a un colaborador. */
-export const updatePermissions = asyncHandler(async (req, res) => {
-  const m = await Membership.findOne({ business: req.businessId, user: req.params.userId });
-  if (!m) throw ApiError.notFound('Ese miembro no existe.');
-  if (m.role === 'owner') throw ApiError.badRequest('El dueño siempre tiene todos los permisos.');
-  const before = { ...DEFAULT_MEMBER_PERMISSIONS, ...(m.toObject().permissions || {}) };
-  for (const k of PERMISSION_KEYS) if (req.body[k] !== undefined) m.set(`permissions.${k}`, req.body[k]);
-  await m.save();
-  const after = { ...DEFAULT_MEMBER_PERMISSIONS, ...(m.toObject().permissions || {}) };
-  const LABEL = { simulator: 'simulador', training: 'entrenar el bot', profile: 'datos del negocio', connections: 'conexiones' };
-  const changes = PERMISSION_KEYS.filter((k) => before[k] !== after[k]).map((k) => `${after[k] ? 'dio' : 'quitó'} ${LABEL[k]}`);
-  if (changes.length) {
-    const user = await User.findById(req.params.userId).select('name email').lean();
-    void logAudit({
-      businessId: req.businessId,
-      userId: req.userId,
-      action: 'member.permissions',
-      summary: `Permisos de ${user?.name || user?.email || 'un colaborador'}: ${changes.join(', ')}.`,
-    });
-  }
-  res.json({ success: true, data: { permissions: after } });
-});
-

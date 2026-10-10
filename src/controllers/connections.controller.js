@@ -566,6 +566,7 @@ function channelSettingsView(business) {
       pausedUntil: until('instagram'),
       iceBreakers: cs.instagram?.iceBreakers || [],
     },
+    web: { paused: isChannelPaused(business, 'web'), pausedUntil: until('web') },
   };
 }
 
@@ -592,7 +593,7 @@ async function pushProfile(business, channel) {
 
 const question = z.string().trim().min(2, 'Cada pregunta necesita al menos 2 caracteres.').max(80);
 export const channelSettingsSchema = z.object({
-  channel: z.enum(['whatsapp', 'facebook', 'instagram']),
+  channel: z.enum(['whatsapp', 'facebook', 'instagram', 'web']),
   paused: z.boolean().optional(),
   iceBreakers: z.array(question).max(4, 'Máximo 4 preguntas.').optional(),
   greeting: z.string().trim().max(160).optional(),
@@ -611,11 +612,12 @@ export const updateChannelSettings = asyncHandler(async (req, res) => {
     cs.paused = paused;
     cs.pausedUntil = null; // un cambio manual quita cualquier pausa con fecha
   }
+  const metaChannel = channel === 'facebook' || channel === 'instagram';
   const profileChanged =
-    channel !== 'whatsapp' &&
+    metaChannel &&
     ((iceBreakers !== undefined && JSON.stringify(iceBreakers) !== JSON.stringify(cs.iceBreakers || [])) ||
       (channel === 'facebook' && greeting !== undefined && greeting !== (cs.greeting || '')));
-  if (channel !== 'whatsapp' && iceBreakers !== undefined) cs.iceBreakers = iceBreakers;
+  if (metaChannel && iceBreakers !== undefined) cs.iceBreakers = iceBreakers;
   if (channel === 'facebook' && greeting !== undefined) cs.greeting = greeting;
   business.channelSettings[channel] = cs;
   business.markModified('channelSettings');
@@ -631,7 +633,7 @@ export const updateChannelSettings = asyncHandler(async (req, res) => {
   }
 
   if (paused !== undefined && paused !== wasPaused) {
-    const label = { whatsapp: 'WhatsApp', facebook: 'Messenger', instagram: 'Instagram' }[channel];
+    const label = { whatsapp: 'WhatsApp', facebook: 'Messenger', instagram: 'Instagram', web: 'el chat del sitio web' }[channel];
     void logAudit({
       businessId: req.businessId,
       userId: req.userId,

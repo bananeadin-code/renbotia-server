@@ -27,7 +27,7 @@ export const listAllBusinesses = asyncHandler(async (req, res) => {
         // Agrupamos por negocio Y modelo para estimar el costo con el precio real
         // de cada modelo (Haiku/Sonnet), ahora que cada plan corre en uno distinto.
         $group: {
-          _id: { business: '$business', model: '$model' },
+          _id: { business: '$business', model: '$model', source: '$source' },
           // Reales (para costo)
           inputTokens: notSim('inputTokens'),
           outputTokens: notSim('outputTokens'),
@@ -49,11 +49,15 @@ export const listAllBusinesses = asyncHandler(async (req, res) => {
   const usageMap = new Map();
   for (const g of usageByBusiness) {
     const key = String(g._id.business);
-    const acc = usageMap.get(key) || { realTokens: 0, demoTokens: 0, realRequests: 0, costUsd: 0 };
+    const acc = usageMap.get(key) || { realTokens: 0, demoTokens: 0, realRequests: 0, costUsd: 0, ownerCostUsd: 0, auditCostUsd: 0 };
     acc.realTokens += g.realTokens || 0;
     acc.demoTokens += g.demoTokens || 0;
     acc.realRequests += g.realRequests || 0;
-    acc.costUsd += estimateCostUSD(g, g._id.model);
+    const c = estimateCostUSD(g, g._id.model);
+    acc.costUsd += c;
+    // Aparte: asistente del dueño por WhatsApp y prueba de seguridad del bot.
+    if (g._id.source === 'owner') acc.ownerCostUsd += c;
+    if (g._id.source === 'audit') acc.auditCostUsd += c;
     usageMap.set(key, acc);
   }
 
@@ -77,6 +81,8 @@ export const listAllBusinesses = asyncHandler(async (req, res) => {
       totalRequests: usage?.realRequests ?? 0,
       costUsd,
       costMxn: usdToMxn(costUsd),
+      ownerCostUsd: usage?.ownerCostUsd ?? 0,
+      auditCostUsd: usage?.auditCostUsd ?? 0,
       createdAt: b.createdAt,
     };
   });

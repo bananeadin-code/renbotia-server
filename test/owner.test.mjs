@@ -66,6 +66,7 @@ describe('Asistente del dueño por WhatsApp', () => {
     assert.equal(cs.whatsapp.paused, true);
     assert.equal(cs.facebook.paused, true);
     assert.equal(cs.instagram.paused, true);
+    assert.equal(cs.web.paused, true, '"todos" incluye el chat del sitio web');
     assert.ok(cs.whatsapp.pausedUntil, 'con hora de reactivación');
     assert.match(sent.at(-1), /en pausa/);
   });

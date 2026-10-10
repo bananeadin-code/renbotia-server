@@ -89,6 +89,8 @@ const businessSchema = new mongoose.Schema(
     channelSettings: {
       // pausedUntil: pausa temporal (p. ej. "pausa el bot hasta las 6" desde WhatsApp).
       whatsapp: { paused: { type: Boolean, default: false }, pausedUntil: { type: Date, default: null } },
+      // Chat del sitio web: pausado = los mensajes llegan a la bandeja y responde una persona.
+      web: { paused: { type: Boolean, default: false }, pausedUntil: { type: Date, default: null } },
       facebook: {
         paused: { type: Boolean, default: false },
         pausedUntil: { type: Date, default: null },

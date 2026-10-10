@@ -49,7 +49,9 @@ const MAX_NUMBERS = 2;
 const MAX_FAILURES = 5;
 const INACTIVE_MS = 30 * 24 * 60 * 60 * 1000;
 const PENDING_TTL_MS = 15 * 60 * 1000;
-const OWNER_MODEL = MODEL_BY_PLAN.elite;
+// Modelo del asistente del dueño: el más confiable por defecto; se puede cambiar
+// en Render (OWNER_ASSISTANT_MODEL) si el costo lo pide, sin tocar código.
+const OWNER_MODEL = process.env.OWNER_ASSISTANT_MODEL || MODEL_BY_PLAN.elite;
 const DAILY_CAP = 60;
 const CUSTOMER_MODE_MS = 30 * 60 * 1000;
 
@@ -159,8 +161,9 @@ export function ownerEntry(business, waId) {
 
 /* ── Utilidades de hora local ──────────────────────────────────────────────── */
 
-const CHANNELS = { whatsapp: 'WhatsApp', messenger: 'Messenger', instagram: 'Instagram' };
-const KEY_OF = { whatsapp: 'whatsapp', messenger: 'facebook', instagram: 'instagram' };
+const CHANNELS = { whatsapp: 'WhatsApp', messenger: 'Messenger', instagram: 'Instagram', sitio_web: 'el chat del sitio web' };
+const KEY_OF = { whatsapp: 'whatsapp', messenger: 'facebook', instagram: 'instagram', sitio_web: 'web' };
+const ALL_LABEL = 'todos tus canales (WhatsApp, Messenger, Instagram y el chat del sitio)';
 const CHANNEL_NAME = { whatsapp: 'WhatsApp', facebook: 'Messenger', instagram: 'Instagram', web: 'Sitio web' };
 const STATUS_LABEL = { pendiente: 'pendiente', confirmado: 'confirmado', completado: 'completado', cancelado: 'cancelado' };
 
@@ -202,7 +205,7 @@ const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /* ── Herramientas del asistente ────────────────────────────────────────────── */
 
-const CANAL = { type: 'string', enum: ['whatsapp', 'messenger', 'instagram', 'todos'] };
+const CANAL = { type: 'string', enum: ['whatsapp', 'messenger', 'instagram', 'sitio_web', 'todos'] };
 const TOOLS = [
   {
     name: 'ver_estado',
@@ -253,7 +256,7 @@ const TOOLS = [
   {
     name: 'pausar_bot',
     description:
-      'Pausa al bot (los mensajes llegan a la bandeja y los contesta una persona). "todos" = WhatsApp, Messenger e Instagram. Queda pendiente de que el dueño confirme.',
+      'Pausa al bot (los mensajes llegan a la bandeja y los contesta una persona). "todos" = WhatsApp, Messenger, Instagram y el chat del sitio web. Queda pendiente de que el dueño confirme.',
     input_schema: {
       type: 'object',
       properties: {
@@ -338,16 +341,20 @@ async function runReadTool(name, input, ctx) {
   const { business, tz } = ctx;
   if (name === 'ver_estado') {
     const [b, cfg] = await Promise.all([
-      Business.findById(business._id).select('channelSettings whatsappPhoneNumberId facebookPageId instagramAccountId').lean(),
+      Business.findById(business._id).select('channelSettings whatsappPhoneNumberId facebookPageId instagramAccountId widget.enabled').lean(),
       BotConfig.findOne({ business: business._id }).select('schedule notices').lean(),
     ]);
-    const connected = { WhatsApp: Boolean(b.whatsappPhoneNumberId), Messenger: Boolean(b.facebookPageId), Instagram: Boolean(b.instagramAccountId) };
+    const connected = {
+      WhatsApp: Boolean(b.whatsappPhoneNumberId),
+      Messenger: Boolean(b.facebookPageId),
+      Instagram: Boolean(b.instagramAccountId),
+      [CHANNELS.sitio_web]: Boolean(b.widget?.enabled),
+    };
     const open = isOpenNow(cfg?.schedule);
     const now = Date.now();
     const bal = computeBalance(ctx.sub);
     return {
       canales: pauseState(b, tz).map((c) => ({ ...c, conectado: connected[c.canal] })),
-      chat_del_sitio_web: 'no se pausa desde aquí; se apaga en el panel (Conexiones → Sitio web)',
       horario: open === null ? 'sin horario configurado (el bot contesta siempre)' : open ? 'abierto ahora' : 'cerrado ahora',
       modo_horario:
         cfg?.schedule?.enabled && cfg.schedule.botMode === 'closed_only' ? 'el bot solo contesta fuera de horario' : 'el bot contesta siempre',
@@ -460,6 +467,10 @@ async function runReadTool(name, input, ctx) {
         cuando: r.scheduledAt ? fmtLocal(tz, new Date(r.scheduledAt)) : '',
         estado: r.status,
         canal: CHANNEL_NAME[r.channel] || (r.source === 'manual' ? 'creado a mano' : ''),
+        recordatorio:
+          { sent: 'enviado, sin respuesta', confirmed: 'el cliente confirmó', cancelled: 'el cliente canceló', reschedule: 'quiere cambiarla', skipped: 'no se envió' }[
+            r.reminder?.status
+          ] || '',
       })),
     };
   }
@@ -481,7 +492,7 @@ async function prepareAction(name, input, ctx) {
   let args = { ...input };
   if (name === 'pausar_bot') {
     const canal = input.canal || 'todos';
-    const label = canal === 'todos' ? 'WhatsApp, Messenger e Instagram' : CHANNELS[canal];
+    const label = canal === 'todos' ? ALL_LABEL : CHANNELS[canal];
     const until = input.hasta
       ? nextLocalTime(tz, input.hasta)
       : input.minutos
@@ -528,7 +539,7 @@ async function executePending(business, pending, tz) {
   const { action, args } = pending;
   if (action === 'pausar_bot') {
     await setPause(business, args.canal, true, args.until);
-    const where = args.canal === 'todos' ? 'WhatsApp, Messenger e Instagram' : CHANNELS[args.canal];
+    const where = args.canal === 'todos' ? ALL_LABEL : CHANNELS[args.canal];
     return `Listo, el bot quedó en pausa en ${where}${args.until ? ` hasta ${fmtLocal(tz, new Date(args.until))}` : ''}. Los mensajes llegan a tu bandeja. Cuando quieras, dime "reactiva el bot".`;
   }
   if (action === 'agregar_aviso') {
@@ -580,7 +591,7 @@ async function runImmediate(name, input, ctx) {
   if (name === 'reanudar_bot') {
     const canal = input.canal || 'todos';
     await setPause(business, canal, false);
-    const label = canal === 'todos' ? 'WhatsApp, Messenger e Instagram' : CHANNELS[canal];
+    const label = canal === 'todos' ? ALL_LABEL : CHANNELS[canal];
     audit(ctx, 'reanudar_bot', `Reactivar el bot en ${label}`);
     return { ok: true, mensaje: `Listo, el bot ya está respondiendo en ${label}.` };
   }
@@ -675,7 +686,7 @@ Cómo responder:
 - Si pide reactivar sin decir canal, reactiva todos ("todos").
 - Antes de que responda SÍ, habla en futuro ("Voy a pausar…", "Agrego este aviso…"); en pasado solo lo que ya hizo una herramienta.
 - Solo las herramientas cambian cosas. Nunca digas que pausaste, reactivaste, agregaste, quitaste o confirmaste algo si no llamaste la herramienta en este turno.
-- "Todos los canales" = WhatsApp, Messenger e Instagram. Horas en 24 h para las herramientas (6 de la tarde = 18:00).
+- "Todos los canales" = WhatsApp, Messenger, Instagram y el chat del sitio web (canal sitio_web). Horas en 24 h para las herramientas (6 de la tarde = 18:00).
 - No inventes cifras ni estados: consulta con las herramientas. Si pregunta si el bot está activo o pausado, usa ver_estado.
 - Pausar, agregar avisos y agregar preguntas: llama SIEMPRE la herramienta en ese mismo turno (así queda lista) y luego pide que responda *SÍ*; nunca pidas el SÍ sin haberla llamado. Reactivar el bot, quitar avisos y cambiar el estado de la agenda se aplican al momento: confírmalo en una línea.
 - Nunca respondas vacío: si ya estaba hecho lo que pide, dilo (ej. "Ya está activo en todos tus canales").
