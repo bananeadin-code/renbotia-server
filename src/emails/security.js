@@ -3,6 +3,8 @@
  *  - new_login:      inicio de sesión desde un dispositivo nuevo.
  *  - session_reuse:  se detectó el uso de una sesión robada/copiada y se cerró.
  *  - account_locked: varios intentos fallidos de contraseña → bloqueo temporal.
+ *  - passkey_added / passkey_removed: se agregó o quitó una llave de acceso.
+ *  - two_factor_off: se apagó la verificación en dos pasos.
  *
  * @param {object} p
  * @param {'new_login'|'session_reuse'|'account_locked'} p.kind
@@ -45,6 +47,30 @@ export function securityEmail(p) {
       body: `${greet} alguien intentó usar una sesión de tu cuenta (${where || 'dispositivo desconocido'}) que ya había sido renovada. Es una señal de que la sesión pudo ser copiada, así que la cerramos el ${when}.`,
       warn: 'Por precaución, cambia tu contraseña y revisa tus sesiones activas.',
       cta: 'Revisar mis sesiones',
+    },
+    passkey_added: {
+      tag: ['Llave de acceso agregada', '#ecfdf5', '#047857'],
+      subject: 'Agregaste una llave de acceso a tu cuenta de RenBotIA',
+      title: 'Nueva llave de acceso',
+      body: `${greet} el ${when} se agregó una llave de acceso (<b>${escapeHtml(p.device || 'nuevo dispositivo')}</b>). Desde ahí puedes entrar con tu huella, cara o PIN.`,
+      warn: 'Si no fuiste tú, entra a tu cuenta, quita esa llave y cambia tu contraseña.',
+      cta: 'Ver mis llaves de acceso',
+    },
+    passkey_removed: {
+      tag: ['Llave de acceso eliminada', '#f8fafc', '#334155'],
+      subject: 'Quitaste una llave de acceso de tu cuenta de RenBotIA',
+      title: 'Se quitó una llave de acceso',
+      body: `${greet} el ${when} se quitó la llave de acceso <b>${escapeHtml(p.device || '')}</b>. Ese dispositivo ya no puede entrar sin contraseña.`,
+      warn: 'Si no fuiste tú, cambia tu contraseña y revisa tus sesiones.',
+      cta: 'Revisar mi seguridad',
+    },
+    two_factor_off: {
+      tag: ['Verificación en dos pasos apagada', '#fff7ed', '#b45309'],
+      subject: 'Apagaste la verificación en dos pasos de tu cuenta',
+      title: 'La verificación en dos pasos está apagada',
+      body: `${greet} el ${when} se apagó la verificación en dos pasos (${where || 'desde tu panel'}). Ahora solo la contraseña protege tu cuenta.`,
+      warn: 'Si no fuiste tú, cambia tu contraseña y vuelve a encenderla en Perfil → Seguridad.',
+      cta: 'Revisar mi seguridad',
     },
     account_locked: {
       tag: ['Cuenta bloqueada', '#fff7ed', '#b45309'],

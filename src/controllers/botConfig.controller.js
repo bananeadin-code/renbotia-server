@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { runBotAudit, lastAudit } from '../services/botAudit.service.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { BotConfig } from '../models/BotConfig.js';
 import { Subscription } from '../models/Subscription.js';
@@ -224,3 +225,14 @@ export const removeNotice = asyncHandler(async (req, res) => {
   res.json({ success: true, data: { notices: activeNotices(cfg) } });
 });
 
+
+/** GET /api/botconfig/audit — última prueba de seguridad del bot. */
+export const getBotAudit = asyncHandler(async (req, res) => {
+  res.json({ success: true, data: { audit: await lastAudit(req.businessId) } });
+});
+
+/** POST /api/botconfig/audit — corre la prueba (7 clientes tramposos, sin efectos). */
+export const postBotAudit = asyncHandler(async (req, res) => {
+  const audit = await runBotAudit({ businessId: req.businessId, userId: req.userId });
+  res.json({ success: true, data: { audit } });
+});

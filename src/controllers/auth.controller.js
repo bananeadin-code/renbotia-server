@@ -1,4 +1,7 @@
 import { z } from 'zod';
+import * as passkeys from '../services/passkey.service.js';
+import { securityOverview } from '../services/securityOverview.service.js';
+import { turnstileEnabled } from '../middleware/turnstile.middleware.js';
 import * as accessService from '../services/access.service.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import * as authService from '../services/auth.service.js';
@@ -8,6 +11,8 @@ import { env, isProd } from '../config/env.js';
 import { requestContext, revokeSession, revokeAllSessions, listSessions, listContexts } from '../services/session.service.js';
 import { verifyRefreshToken } from '../utils/jwt.js';
 import { ApiError } from '../utils/ApiError.js';
+import { sendSecurityEmail } from '../services/email.service.js';
+import { describeDevice } from '../utils/userAgent.js';
 
 /**
  * Esquemas de validación (Zod). Se exportan para usarse en las rutas.
@@ -163,7 +168,14 @@ export const googleAuth = asyncHandler(async (req, res) => {
  * Google). Sin datos sensibles. Permite ocultar el botón si no está configurado.
  */
 export const getAuthConfig = asyncHandler(async (req, res) => {
-  res.json({ success: true, data: { googleClientId: env.google.clientId } });
+  res.json({
+    success: true,
+    data: {
+      googleClientId: env.google.clientId,
+      // Clave PÚBLICA de Turnstile (solo si también hay clave secreta: activo).
+      turnstileSiteKey: turnstileEnabled() ? process.env.TURNSTILE_SITE_KEY || '' : '',
+    },
+  });
 });
 
 export const refresh = asyncHandler(async (req, res) => {
@@ -302,6 +314,15 @@ export const updateTwoFactor = asyncHandler(async (req, res) => {
     { $set: { twoFactorEnabled: req.body.enabled } },
     { new: true }
   );
+  if (!req.body.enabled) {
+    void sendSecurityEmail({
+      kind: 'two_factor_off',
+      to: user.email,
+      customerName: user.name,
+      device: describeDevice(req.get('user-agent')).label,
+      url: `${env.publicUrl.replace(/\/$/, '')}/dashboard/perfil#seguridad`,
+    });
+  }
   res.json({ success: true, data: { user } });
 });
 
@@ -341,4 +362,62 @@ export const deleteAccount = asyncHandler(async (req, res) => {
   res.clearCookie('refreshToken', { path: '/api/auth' });
   res.clearCookie('deviceToken', { path: '/api/auth' });
   res.json({ success: true, message: 'Cuenta eliminada' });
+});
+
+/* ── Llaves de acceso (passkeys) ───────────────────────────────────────────── */
+
+const webauthnResponse = z.object({ id: z.string().min(8).max(1024) }).passthrough();
+export const passkeyVerifySchema = z.object({
+  challengeId: z.string().regex(/^[a-f0-9]{24}$/i),
+  response: webauthnResponse,
+});
+export const passkeyRenameSchema = z.object({ name: z.string().trim().min(1).max(60) });
+
+/** GET /api/auth/passkeys — mis llaves. */
+export const getPasskeys = asyncHandler(async (req, res) => {
+  res.json({ success: true, data: { passkeys: await passkeys.listPasskeys(req.userId) } });
+});
+
+/** POST /api/auth/passkeys/register/options — empezar a agregar una llave (con step-up). */
+export const passkeyRegisterOptions = asyncHandler(async (req, res) => {
+  res.json({ success: true, data: await passkeys.registrationOptions(req.userId) });
+});
+
+/** POST /api/auth/passkeys/register/verify — guardar la llave creada en el dispositivo. */
+export const passkeyRegisterVerify = asyncHandler(async (req, res) => {
+  const list = await passkeys.verifyRegistration(req.userId, { ...req.body, userAgent: req.get('user-agent') });
+  res.status(201).json({ success: true, data: { passkeys: list } });
+});
+
+export const renamePasskey = asyncHandler(async (req, res) => {
+  res.json({ success: true, data: { passkeys: await passkeys.renamePasskey(req.userId, req.params.id, req.body.name) } });
+});
+
+export const deletePasskey = asyncHandler(async (req, res) => {
+  res.json({ success: true, data: { passkeys: await passkeys.removePasskey(req.userId, req.params.id) } });
+});
+
+/** POST /api/auth/passkeys/login/options — entrar con llave (sin escribir correo). */
+export const passkeyLoginOptions = asyncHandler(async (req, res) => {
+  res.json({ success: true, data: await passkeys.loginOptions() });
+});
+
+/** POST /api/auth/passkeys/login/verify — la llave cuenta como 2º factor. */
+export const passkeyLoginVerify = asyncHandler(async (req, res) => {
+  const user = await passkeys.verifyLogin(req.body);
+  const result = await accessService.finishLogin(user, requestContext(req), { mfa: true });
+  sendAuthResponse(res, result);
+});
+
+/** POST /api/auth/step-up/passkey/options|verify — confirmar identidad con llave. */
+export const stepUpPasskeyOptions = asyncHandler(async (req, res) => {
+  res.json({ success: true, data: await passkeys.stepUpOptions(req.userId) });
+});
+export const stepUpPasskeyVerify = asyncHandler(async (req, res) => {
+  res.json({ success: true, data: await passkeys.verifyStepUp(req.userId, req.sessionId, req.body) });
+});
+
+/** GET /api/auth/security — "Tu seguridad": nivel, sugerencias y accesos recientes. */
+export const getSecurityOverview = asyncHandler(async (req, res) => {
+  res.json({ success: true, data: await securityOverview(req.userId, req.sessionId) });
 });

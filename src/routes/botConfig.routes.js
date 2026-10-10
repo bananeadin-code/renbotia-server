@@ -14,6 +14,9 @@ router.put('/', requirePermission('training'), validate(botConfig.updateBotConfi
 
 // Avisos temporales (también se ponen desde el WhatsApp del dueño).
 router.get('/notices', requireAccess('training', 'view'), botConfig.listNotices);
+// Prueba de seguridad del bot: verla con "Entrenamiento: ver"; correrla gasta tokens → "editar".
+router.get('/audit', requireAccess('training', 'view'), botConfig.getBotAudit);
+router.post('/audit', requireAccess('training', 'edit'), botConfig.postBotAudit);
 router.post('/notices', requirePermission('training'), validate(botConfig.noticeSchema), botConfig.addNotice);
 router.delete('/notices/:id', requirePermission('training'), botConfig.removeNotice);
 

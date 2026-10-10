@@ -1,4 +1,6 @@
 import { ROLES } from '../config/constants.js';
+import { Passkey } from '../models/Passkey.js';
+import { AuthChallenge } from '../models/AuthChallenge.js';
 import { ApiError } from '../utils/ApiError.js';
 import { logger } from '../utils/logger.js';
 import { deleteCustomer } from './stripe.service.js';
@@ -113,6 +115,8 @@ export async function deleteAccount({ userId, password, confirm }) {
   // Datos ligados directamente al usuario (no a un negocio).
   await EmailOtp.deleteMany({ user: userId });
   await Session.deleteMany({ user: userId }); // sesiones e historial de dispositivos
+  await Passkey.deleteMany({ user: userId }); // llaves de acceso
+  await AuthChallenge.deleteMany({ user: userId });
   await Payment.deleteMany({ user: userId });
   await Waitlist.deleteMany({ email: user.email });
 

@@ -172,6 +172,9 @@ const businessSchema = new mongoose.Schema(
       expiresAt: { type: Date, default: null },
     },
     // Tope diario de mensajes del dueño al asistente (cuidar el saldo).
+    // Última prueba de seguridad del bot (resultados para el panel).
+    botAudit: { type: mongoose.Schema.Types.Mixed, default: null },
+    botAuditRunAt: { type: Date, default: null }, // evita correrla dos veces seguidas
     ownerUsage: {
       day: { type: String, default: '' },
       count: { type: Number, default: 0 },
