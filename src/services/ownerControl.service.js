@@ -6,12 +6,14 @@ import { ChatSimulation } from '../models/ChatSimulation.js';
 import { LearningSuggestion } from '../models/LearningSuggestion.js';
 import { UsageLog } from '../models/UsageLog.js';
 import { User } from '../models/User.js';
+import { ManagedRecord } from '../models/ManagedRecord.js';
+import { OwnerMessage } from '../models/OwnerMessage.js';
 import '../models/Plan.js';
-import { MODEL_BY_PLAN } from '../config/constants.js';
+import { MODEL_BY_PLAN, RECORD_TYPE_META } from '../config/constants.js';
 import { getPlanLimits } from '../utils/planGating.js';
-import { isChannelPaused } from '../utils/botAvailability.js';
+import { isChannelPaused, isOpenNow } from '../utils/botAvailability.js';
 import { generateReplyWithTools } from './claude.service.js';
-import { applyLazyReset, hasBalance, deductTokens } from './token.service.js';
+import { applyLazyReset, hasBalance, deductTokens, computeBalance } from './token.service.js';
 import { computeImpact } from './impact.service.js';
 import { validateTrainingConfig } from './validation.service.js';
 import { sendText } from './whatsapp.service.js';
@@ -29,10 +31,14 @@ import { logger } from '../utils/logger.js';
  *    no se puede suplantar. Se guarda solo el hash del código.
  *  - Máx. 2 números, 5 intentos fallidos por hora, aviso por correo al vincular.
  *  - Vence a los 30 días sin uso; restablecer la contraseña desvincula todo.
- *  - El asistente solo tiene herramientas acotadas (resumen, leads, pendientes,
- *    pausar/reanudar, avisos temporales, agregar preguntas). Nada de facturación,
- *    planes, borrar datos ni desconectar canales. Todo lo que CAMBIA algo pide
- *    confirmación ("sí") y queda en la bitácora.
+ *  - El asistente solo tiene herramientas acotadas (estado, resumen, leads,
+ *    pendientes, buscar clientes, agenda, pausar/reanudar, avisos, preguntas).
+ *    Nada de facturación, planes, borrar datos, desconectar canales ni escribir
+ *    a clientes. Lo que llega a los clientes (pausa, avisos, preguntas) pide
+ *    confirmación; lo reversible (reactivar, quitar aviso, estado de la agenda)
+ *    se aplica al momento. Todo queda en la bitácora.
+ *  - Recuerda la charla reciente (OwnerMessage, 3 días) para entender respuestas
+ *    cortas como "en todos" o "sí, hazlo".
  *  - Los mensajes del dueño nunca se mezclan con las conversaciones de clientes.
  */
 
@@ -42,7 +48,8 @@ const CODE_TTL_MS = 10 * 60 * 1000;
 const MAX_NUMBERS = 2;
 const MAX_FAILURES = 5;
 const INACTIVE_MS = 30 * 24 * 60 * 60 * 1000;
-const PENDING_TTL_MS = 5 * 60 * 1000;
+const PENDING_TTL_MS = 15 * 60 * 1000;
+const OWNER_MODEL = MODEL_BY_PLAN.elite;
 const DAILY_CAP = 60;
 const CUSTOMER_MODE_MS = 30 * 60 * 1000;
 
@@ -77,7 +84,7 @@ export async function createLinkCode(businessId) {
 }
 
 async function reply(business, phoneNumberId, to, text) {
-  return sendText({ phoneNumberId: phoneNumberId || business.whatsappPhoneNumberId, to, text });
+  return deps.send({ phoneNumberId: phoneNumberId || business.whatsappPhoneNumberId, to, text });
 }
 
 /** Mensaje "RB-XXXXXXXX": intenta vincular ese número como dueño. */
@@ -141,7 +148,7 @@ export async function tryLinkOwner({ business: base, waId, text, phoneNumberId }
     business,
     phoneNumberId,
     waId,
-    `*¡Listo!* Este número ya maneja el bot de ${business.name}.\n\nPuedes escribirme cosas como:\n• ¿Cómo vamos hoy?\n• Pásame los leads\n• Pausa el bot hasta las 6\n• Hoy cerramos a las 4\n• Agrega: ¿hacen envíos? Sí, gratis desde $500\n\nPara hablar con tu bot como cliente escribe *modo cliente*.`
+    `*¡Listo!* Soy tu asistente para manejar el bot de ${business.name}. Escríbeme como le escribirías a alguien de tu equipo, por ejemplo:\n• ¿Cómo vamos hoy?\n• ¿Qué quería Laura?\n• ¿Qué tengo en la agenda mañana?\n• Pausa el bot hasta las 6\n• Hoy cerramos a las 4\n\nPara probar tu bot como cliente escribe *modo cliente*.`
   );
 }
 
@@ -150,20 +157,24 @@ export function ownerEntry(business, waId) {
   return (business.ownerWhatsApp || []).find((o) => o.waId === waId) || null;
 }
 
-/* ── Herramientas del asistente ────────────────────────────────────────────── */
+/* ── Utilidades de hora local ──────────────────────────────────────────────── */
 
 const CHANNELS = { whatsapp: 'WhatsApp', messenger: 'Messenger', instagram: 'Instagram' };
 const KEY_OF = { whatsapp: 'whatsapp', messenger: 'facebook', instagram: 'instagram' };
+const CHANNEL_NAME = { whatsapp: 'WhatsApp', facebook: 'Messenger', instagram: 'Instagram', web: 'Sitio web' };
+const STATUS_LABEL = { pendiente: 'pendiente', confirmado: 'confirmado', completado: 'completado', cancelado: 'cancelado' };
 
 /** Partes de la hora local del negocio. */
 function localParts(tz, date = new Date()) {
   const p = new Intl.DateTimeFormat('en-US', {
     timeZone: tz,
+    day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
     hourCycle: 'h23',
   }).formatToParts(date);
-  return { h: Number(p.find((x) => x.type === 'hour').value), m: Number(p.find((x) => x.type === 'minute').value) };
+  const v = (t) => Number(p.find((x) => x.type === t).value);
+  return { day: v('day'), h: v('hour'), m: v('minute') };
 }
 /** Próxima vez que el reloj local marque HH:MM (hoy o mañana). */
 function nextLocalTime(tz, hhmm) {
@@ -176,19 +187,32 @@ function nextLocalTime(tz, hhmm) {
   if (diff <= 0) diff += 24 * 60;
   return new Date(Date.now() + diff * 60 * 1000);
 }
-function endOfLocalDay(tz, extraDays = 0) {
+/** Inicio del día local (+N días). */
+function startOfLocalDay(tz, plusDays = 0) {
   const { h, m } = localParts(tz);
-  return new Date(Date.now() + ((24 * 60 - (h * 60 + m)) - 1 + extraDays * 24 * 60) * 60 * 1000);
+  return new Date(Date.now() - (h * 60 + m) * 60000 + plusDays * 864e5);
 }
+const endOfLocalDay = (tz, extraDays = 0) => new Date(startOfLocalDay(tz, extraDays + 1).getTime() - 60000);
 const fmtLocal = (tz, d) =>
-  new Intl.DateTimeFormat('es-MX', { timeZone: tz, weekday: 'short', hour: '2-digit', minute: '2-digit' })
+  new Intl.DateTimeFormat('es-MX', { timeZone: tz, weekday: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
     .format(d)
     .replace(/\.$/, ''); // "p.m." sin el punto final, para no duplicarlo en las frases
+const money = (n) => `$${Math.round(n || 0).toLocaleString('es-MX')}`;
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+/* ── Herramientas del asistente ────────────────────────────────────────────── */
+
+const CANAL = { type: 'string', enum: ['whatsapp', 'messenger', 'instagram', 'todos'] };
 const TOOLS = [
   {
+    name: 'ver_estado',
+    description:
+      'Estado actual del bot: si está activo o en pausa en cada canal (y hasta cuándo), qué canales están conectados, si el negocio está abierto según su horario, conversaciones disponibles y avisos vigentes. Úsala ante cualquier duda sobre si el bot está funcionando.',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
     name: 'ver_resumen',
-    description: 'Resumen de resultados del bot (conversaciones, leads, citas/pedidos, valor estimado, fuera de horario).',
+    description: 'Resultados del bot (conversaciones, leads, citas/pedidos, valor estimado, fuera de horario).',
     input_schema: { type: 'object', properties: { periodo: { type: 'string', enum: ['hoy', 'semana', 'mes'] } }, required: ['periodo'] },
   },
   {
@@ -198,30 +222,57 @@ const TOOLS = [
   },
   {
     name: 'ver_pendientes',
-    description: 'Conversaciones que requieren atención y preguntas que el bot aún no sabe responder.',
+    description: 'Conversaciones que esperan a una persona y preguntas que el bot aún no sabe responder.',
     input_schema: { type: 'object', properties: {} },
   },
   {
+    name: 'buscar_cliente',
+    description:
+      'Busca conversaciones de clientes por nombre, teléfono o palabra (ej. "Laura", "pastel de 3 leches") y devuelve lo último que se habló, el canal y si espera respuesta.',
+    input_schema: { type: 'object', properties: { texto: { type: 'string' } }, required: ['texto'] },
+  },
+  {
+    name: 'ver_agenda',
+    description:
+      'Citas, reservaciones, pedidos y prospectos del módulo de Gestión. "pendientes" = lo que falta confirmar. Cada registro trae un id para cambiar su estado.',
+    input_schema: {
+      type: 'object',
+      properties: { periodo: { type: 'string', enum: ['hoy', 'manana', 'semana', 'pendientes'] } },
+      required: ['periodo'],
+    },
+  },
+  {
+    name: 'cambiar_estado_registro',
+    description: 'Cambia el estado de un registro de la agenda usando el id de ver_agenda. Se aplica de inmediato.',
+    input_schema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, estado: { type: 'string', enum: ['pendiente', 'confirmado', 'completado', 'cancelado'] } },
+      required: ['id', 'estado'],
+    },
+  },
+  {
     name: 'pausar_bot',
-    description: 'Pausa al bot (los mensajes llegan a la bandeja y los contesta una persona). Requiere confirmación del dueño.',
+    description:
+      'Pausa al bot (los mensajes llegan a la bandeja y los contesta una persona). "todos" = WhatsApp, Messenger e Instagram. Queda pendiente de que el dueño confirme.',
     input_schema: {
       type: 'object',
       properties: {
-        canal: { type: 'string', enum: ['whatsapp', 'messenger', 'instagram', 'todos'] },
-        hasta: { type: 'string', description: 'Hora local HH:MM en que se reactiva solo (opcional).' },
-        minutos: { type: 'number', description: 'O cuántos minutos dura la pausa (opcional).' },
+        canal: CANAL,
+        hasta: { type: 'string', description: 'Hora local en formato 24 h HH:MM en que se reactiva solo (ej. 18:00). Opcional.' },
+        minutos: { type: 'number', description: 'O cuántos minutos dura la pausa. Opcional.' },
       },
       required: ['canal'],
     },
   },
   {
     name: 'reanudar_bot',
-    description: 'Reactiva al bot en un canal o en todos. Requiere confirmación.',
-    input_schema: { type: 'object', properties: { canal: { type: 'string', enum: ['whatsapp', 'messenger', 'instagram', 'todos'] } }, required: ['canal'] },
+    description: 'Reactiva al bot en un canal o en todos. Se aplica de inmediato.',
+    input_schema: { type: 'object', properties: { canal: CANAL }, required: ['canal'] },
   },
   {
     name: 'agregar_aviso',
-    description: 'Agrega un aviso temporal que el bot comunicará a los clientes (ej. "hoy cerramos a las 4", "ya no hay pastel de chocolate"). Requiere confirmación.',
+    description:
+      'Aviso temporal que el bot comunicará a los clientes (ej. "hoy cerramos a las 4", "ya no hay pastel de chocolate"). Queda pendiente de que el dueño confirme.',
     input_schema: {
       type: 'object',
       properties: {
@@ -231,36 +282,88 @@ const TOOLS = [
       required: ['texto', 'vigencia'],
     },
   },
-  { name: 'ver_avisos', description: 'Lista los avisos temporales vigentes (numerados).', input_schema: { type: 'object', properties: {} } },
+  { name: 'ver_avisos', description: 'Avisos temporales vigentes (numerados).', input_schema: { type: 'object', properties: {} } },
   {
     name: 'quitar_aviso',
-    description: 'Quita un aviso vigente por su número (de ver_avisos). Requiere confirmación.',
+    description: 'Quita un aviso vigente por su número (de ver_avisos). Se aplica de inmediato.',
     input_schema: { type: 'object', properties: { numero: { type: 'number' } }, required: ['numero'] },
   },
   {
     name: 'agregar_pregunta',
-    description: 'Agrega una pregunta frecuente con su respuesta al entrenamiento del bot. Requiere confirmación.',
+    description: 'Agrega una pregunta frecuente con su respuesta al entrenamiento del bot. Queda pendiente de que el dueño confirme.',
     input_schema: {
       type: 'object',
       properties: { pregunta: { type: 'string' }, respuesta: { type: 'string' } },
       required: ['pregunta', 'respuesta'],
     },
   },
+  {
+    name: 'confirmar_accion',
+    description:
+      'Ejecuta la acción pendiente. Úsala SOLO si en su ÚLTIMO mensaje el dueño acepta claramente (ej. "sí, hazlo", "adelante", "confírmalo", "va").',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'cancelar_accion',
+    description: 'Descarta la acción pendiente si el dueño dice que no, que mejor no o que era una prueba.',
+    input_schema: { type: 'object', properties: {} },
+  },
 ];
 
-const MUTATING = new Set(['pausar_bot', 'reanudar_bot', 'agregar_aviso', 'quitar_aviso', 'agregar_pregunta']);
-const money = (n) => `$${Math.round(n || 0).toLocaleString('es-MX')}`;
+const NEEDS_CONFIRM = new Set(['pausar_bot', 'agregar_aviso', 'agregar_pregunta']);
+const IMMEDIATE = new Set(['reanudar_bot', 'quitar_aviso', 'cambiar_estado_registro', 'confirmar_accion', 'cancelar_accion']);
+
+function audit(ctx, action, summary) {
+  void logAudit({
+    businessId: ctx.business._id,
+    userId: ctx.business.owner,
+    action: `owner.whatsapp.${action}`,
+    summary: `Desde WhatsApp (${maskWaId(ctx.waId)}): ${summary}.`,
+  });
+}
+
+/** Estado de pausa de cada canal, en palabras. */
+function pauseState(business, tz) {
+  return Object.entries(KEY_OF).map(([canal, key]) => {
+    const paused = isChannelPaused(business, key);
+    const until = business.channelSettings?.[key]?.pausedUntil;
+    return {
+      canal: CHANNELS[canal],
+      bot: paused ? (until ? `en pausa hasta ${fmtLocal(tz, new Date(until))}` : 'en pausa hasta que lo reactives') : 'activo',
+    };
+  });
+}
 
 async function runReadTool(name, input, ctx) {
-  const { business } = ctx;
+  const { business, tz } = ctx;
+  if (name === 'ver_estado') {
+    const [b, cfg] = await Promise.all([
+      Business.findById(business._id).select('channelSettings whatsappPhoneNumberId facebookPageId instagramAccountId').lean(),
+      BotConfig.findOne({ business: business._id }).select('schedule notices').lean(),
+    ]);
+    const connected = { WhatsApp: Boolean(b.whatsappPhoneNumberId), Messenger: Boolean(b.facebookPageId), Instagram: Boolean(b.instagramAccountId) };
+    const open = isOpenNow(cfg?.schedule);
+    const now = Date.now();
+    const bal = computeBalance(ctx.sub);
+    return {
+      canales: pauseState(b, tz).map((c) => ({ ...c, conectado: connected[c.canal] })),
+      chat_del_sitio_web: 'no se pausa desde aquí; se apaga en el panel (Conexiones → Sitio web)',
+      horario: open === null ? 'sin horario configurado (el bot contesta siempre)' : open ? 'abierto ahora' : 'cerrado ahora',
+      modo_horario:
+        cfg?.schedule?.enabled && cfg.schedule.botMode === 'closed_only' ? 'el bot solo contesta fuera de horario' : 'el bot contesta siempre',
+      conversaciones_disponibles_aprox: Math.round(bal.available / 5000),
+      avisos_vigentes: (cfg?.notices || []).filter((n) => !n.until || new Date(n.until).getTime() > now).length,
+    };
+  }
   if (name === 'ver_resumen') {
     const now = new Date();
+    const { day, h, m } = localParts(tz);
     const since =
       input.periodo === 'hoy'
-        ? new Date(now.getTime() - (localParts(ctx.tz).h * 60 + localParts(ctx.tz).m) * 60 * 1000)
+        ? startOfLocalDay(tz)
         : input.periodo === 'semana'
           ? new Date(now.getTime() - 7 * 864e5)
-          : new Date(now.getFullYear(), now.getMonth(), 1);
+          : new Date(now.getTime() - ((day - 1) * 24 * 60 + h * 60 + m) * 60000);
     const i = await computeImpact(business._id, since, now);
     return {
       periodo: input.periodo,
@@ -282,46 +385,111 @@ async function runReadTool(name, input, ctx) {
       leads: leads.map((l) => ({
         nombre: l.customerName || l.title || 'Cliente',
         motivo: l.hotLeadReason || '',
-        canal: { whatsapp: 'WhatsApp', facebook: 'Messenger', instagram: 'Instagram', web: 'Sitio web' }[l.channel] || l.channel,
-        cuando: l.hotLeadAt ? fmtLocal(ctx.tz, new Date(l.hotLeadAt)) : '',
+        canal: CHANNEL_NAME[l.channel] || l.channel,
+        cuando: l.hotLeadAt ? fmtLocal(tz, new Date(l.hotLeadAt)) : '',
       })),
     };
   }
   if (name === 'ver_pendientes') {
     const [attention, learning] = await Promise.all([
-      ChatSimulation.countDocuments({ business: business._id, needsAttention: true, channel: { $ne: 'simulator' } }),
+      ChatSimulation.find({ business: business._id, needsAttention: true, channel: { $ne: 'simulator' } })
+        .sort({ updatedAt: -1 })
+        .limit(5)
+        .select('customerName title channel attentionReason')
+        .lean(),
       LearningSuggestion.find({ business: business._id, status: 'pending' }).sort({ updatedAt: -1 }).limit(5).select('question').lean(),
     ]);
-    return { requieren_atencion: attention, el_bot_no_sabe: learning.map((s) => s.question) };
+    return {
+      esperan_a_una_persona: attention.map((c) => ({
+        cliente: c.customerName || c.title || 'Cliente',
+        canal: CHANNEL_NAME[c.channel] || c.channel,
+        motivo: c.attentionReason || '',
+      })),
+      el_bot_no_sabe: learning.map((s) => s.question),
+    };
+  }
+  if (name === 'buscar_cliente') {
+    const q = String(input.texto || '').trim().slice(0, 60);
+    if (q.length < 2) return { error: 'Dime un nombre, teléfono o palabra para buscar.' };
+    const rx = new RegExp(escapeRe(q), 'i');
+    const chats = await ChatSimulation.find(
+      {
+        business: business._id,
+        channel: { $ne: 'simulator' },
+        $or: [{ customerName: rx }, { title: rx }, { customerPhone: rx }, { customerContact: rx }, { 'messages.content': rx }],
+      },
+      { customerName: 1, title: 1, channel: 1, needsAttention: 1, hotLead: 1, handoffMode: 1, updatedAt: 1, messages: { $slice: -6 } }
+    )
+      .sort({ updatedAt: -1 })
+      .limit(3)
+      .lean();
+    if (!chats.length) return { resultados: [], nota: `No encontré conversaciones con "${q}".` };
+    return {
+      resultados: chats.map((c) => ({
+        cliente: c.customerName || c.title || 'Cliente',
+        canal: CHANNEL_NAME[c.channel] || c.channel,
+        ultima_actividad: fmtLocal(tz, new Date(c.updatedAt)),
+        espera_respuesta: Boolean(c.needsAttention),
+        lead_caliente: Boolean(c.hotLead),
+        atiende: c.handoffMode === 'manual' ? 'una persona' : 'el bot',
+        ultimos_mensajes: (c.messages || []).map((m) => `${m.role === 'user' ? 'Cliente' : m.via === 'agent' ? 'Tu equipo' : 'Bot'}: ${String(m.content).slice(0, 220)}`),
+      })),
+    };
+  }
+  if (name === 'ver_agenda') {
+    if ((ctx.sub?.plan?.key || 'free') !== 'elite') return { nota: 'La agenda (módulo de Gestión) es parte del plan Elite.' };
+    const base = { business: business._id };
+    let query;
+    if (input.periodo === 'pendientes') query = { ...base, status: 'pendiente' };
+    else {
+      const from = input.periodo === 'manana' ? startOfLocalDay(tz, 1) : input.periodo === 'hoy' ? startOfLocalDay(tz) : new Date();
+      const to = input.periodo === 'semana' ? new Date(Date.now() + 7 * 864e5) : new Date(from.getTime() + 864e5);
+      query = { ...base, scheduledAt: { $gte: from, $lt: to }, status: { $in: ['pendiente', 'confirmado'] } };
+    }
+    const recs = await ManagedRecord.find(query)
+      .sort(input.periodo === 'pendientes' ? { createdAt: -1 } : { scheduledAt: 1 })
+      .limit(10)
+      .lean();
+    return {
+      registros: recs.map((r) => ({
+        id: String(r._id),
+        tipo: RECORD_TYPE_META[r.type]?.label || r.type,
+        resumen: r.summary || '',
+        cliente: r.customer?.name || '',
+        contacto: r.customer?.contact || '',
+        cuando: r.scheduledAt ? fmtLocal(tz, new Date(r.scheduledAt)) : '',
+        estado: r.status,
+        canal: CHANNEL_NAME[r.channel] || (r.source === 'manual' ? 'creado a mano' : ''),
+      })),
+    };
   }
   if (name === 'ver_avisos') {
     const cfg = await BotConfig.findOne({ business: business._id }).select('notices').lean();
     const now = Date.now();
     const list = (cfg?.notices || []).filter((n) => !n.until || new Date(n.until).getTime() > now);
     return {
-      avisos: list.map((n, i) => ({ numero: i + 1, texto: n.text, vence: n.until ? fmtLocal(ctx.tz, new Date(n.until)) : 'sin fecha' })),
+      avisos: list.map((n, i) => ({ numero: i + 1, texto: n.text, vence: n.until ? fmtLocal(tz, new Date(n.until)) : 'sin fecha' })),
     };
   }
   return { error: 'herramienta desconocida' };
 }
 
-/** Prepara una acción que cambia algo: queda pendiente del "sí" del dueño. */
+/** Prepara una acción que queda pendiente del "sí" del dueño. */
 async function prepareAction(name, input, ctx) {
   const { business, tz } = ctx;
   let summary = '';
   let args = { ...input };
-  if (name === 'pausar_bot' || name === 'reanudar_bot') {
+  if (name === 'pausar_bot') {
     const canal = input.canal || 'todos';
-    const label = canal === 'todos' ? 'todos los canales' : CHANNELS[canal];
-    if (name === 'pausar_bot') {
-      const until = input.hasta ? nextLocalTime(tz, input.hasta) : input.minutos ? new Date(Date.now() + Math.min(Math.max(Number(input.minutos), 5), 7 * 24 * 60) * 60000) : null;
-      if (input.hasta && !until) return { ok: false, error: 'Hora no válida. Usa formato HH:MM.' };
-      args = { canal, until: until ? until.toISOString() : null };
-      summary = `Pausar el bot en ${label}${until ? ` hasta ${fmtLocal(tz, until)}` : ' hasta que lo reactives'}`;
-    } else {
-      args = { canal };
-      summary = `Reactivar el bot en ${label}`;
-    }
+    const label = canal === 'todos' ? 'WhatsApp, Messenger e Instagram' : CHANNELS[canal];
+    const until = input.hasta
+      ? nextLocalTime(tz, input.hasta)
+      : input.minutos
+        ? new Date(Date.now() + Math.min(Math.max(Number(input.minutos), 5), 7 * 24 * 60) * 60000)
+        : null;
+    if (input.hasta && !until) return { ok: false, error: 'Hora no válida. Usa formato 24 h HH:MM (ej. 18:00).' };
+    args = { canal, until: until ? until.toISOString() : null };
+    summary = `Pausar el bot en ${label}${until ? ` hasta ${fmtLocal(tz, until)}` : ' hasta que lo reactives'}`;
   } else if (name === 'agregar_aviso') {
     const texto = String(input.texto || '').trim().slice(0, 200);
     if (texto.length < 3) return { ok: false, error: 'El aviso está vacío.' };
@@ -329,12 +497,6 @@ async function prepareAction(name, input, ctx) {
       input.vigencia === 'hoy' ? endOfLocalDay(tz) : input.vigencia === 'manana' ? endOfLocalDay(tz, 1) : input.vigencia === 'semana' ? new Date(Date.now() + 7 * 864e5) : null;
     args = { texto, until: until ? until.toISOString() : null };
     summary = `Agregar el aviso "${texto}"${until ? ` (vence ${fmtLocal(tz, until)})` : ' (sin fecha de vencimiento)'}`;
-  } else if (name === 'quitar_aviso') {
-    const r = await runReadTool('ver_avisos', {}, ctx);
-    const n = r.avisos.find((a) => a.numero === Number(input.numero));
-    if (!n) return { ok: false, error: 'No hay un aviso con ese número.' };
-    args = { texto: n.texto };
-    summary = `Quitar el aviso "${n.texto}"`;
   } else if (name === 'agregar_pregunta') {
     const pregunta = String(input.pregunta || '').trim().slice(0, 300);
     const respuesta = String(input.respuesta || '').trim().slice(0, 800);
@@ -347,23 +509,27 @@ async function prepareAction(name, input, ctx) {
     { $set: { ownerPending: { action: name, args, summary, waId: ctx.waId, expiresAt: new Date(Date.now() + PENDING_TTL_MS) } } }
   );
   ctx.pendingSummary = summary;
-  return { ok: true, pendiente_de_confirmacion: summary, instruccion: 'Pide al dueño que responda SÍ para confirmar.' };
+  return { ok: true, pendiente_de_confirmacion: summary, instruccion: 'Explica en una línea y pide que responda SÍ.' };
 }
 
-/** Ejecuta la acción confirmada. Devuelve el texto para el dueño. */
+/** Cambia el estado de pausa de uno o todos los canales. */
+async function setPause(business, canal, paused, until = null) {
+  const keys = canal === 'todos' ? Object.values(KEY_OF) : [KEY_OF[canal]].filter(Boolean);
+  const set = {};
+  for (const k of keys) {
+    set[`channelSettings.${k}.paused`] = paused;
+    set[`channelSettings.${k}.pausedUntil`] = paused && until ? new Date(until) : null;
+  }
+  await Business.updateOne({ _id: business._id }, { $set: set });
+}
+
+/** Ejecuta una acción confirmada. Devuelve el texto para el dueño. */
 async function executePending(business, pending, tz) {
   const { action, args } = pending;
-  if (action === 'pausar_bot' || action === 'reanudar_bot') {
-    const keys = args.canal === 'todos' ? Object.values(KEY_OF) : [KEY_OF[args.canal]];
-    const set = {};
-    for (const k of keys) {
-      set[`channelSettings.${k}.paused`] = action === 'pausar_bot';
-      set[`channelSettings.${k}.pausedUntil`] = action === 'pausar_bot' && args.until ? new Date(args.until) : null;
-    }
-    await Business.updateOne({ _id: business._id }, { $set: set });
-    return action === 'pausar_bot'
-      ? `Listo, el bot quedó en pausa${args.until ? ` hasta ${fmtLocal(tz, new Date(args.until))}` : ''}. Los mensajes llegan a tu bandeja.`
-      : 'Listo, el bot ya está respondiendo de nuevo.';
+  if (action === 'pausar_bot') {
+    await setPause(business, args.canal, true, args.until);
+    const where = args.canal === 'todos' ? 'WhatsApp, Messenger e Instagram' : CHANNELS[args.canal];
+    return `Listo, el bot quedó en pausa en ${where}${args.until ? ` hasta ${fmtLocal(tz, new Date(args.until))}` : ''}. Los mensajes llegan a tu bandeja. Cuando quieras, dime "reactiva el bot".`;
   }
   if (action === 'agregar_aviso') {
     await BotConfig.updateOne(
@@ -371,10 +537,6 @@ async function executePending(business, pending, tz) {
       { $push: { notices: { $each: [{ text: args.texto, until: args.until ? new Date(args.until) : null, via: 'whatsapp' }], $slice: -10 } } }
     );
     return 'Listo, el bot ya lo sabe y lo dirá a tus clientes cuando aplique.';
-  }
-  if (action === 'quitar_aviso') {
-    await BotConfig.updateOne({ business: business._id }, { $pull: { notices: { text: args.texto } } });
-    return 'Listo, quité ese aviso.';
   }
   if (action === 'agregar_pregunta') {
     const sub = await Subscription.findOne({ business: business._id }).populate('plan', 'key');
@@ -393,10 +555,134 @@ async function executePending(business, pending, tz) {
   return 'No reconocí esa acción.';
 }
 
+/** Lee la acción pendiente vigente de este número (o null). */
+async function livePending(businessId, waId) {
+  const b = await Business.findById(businessId).select('ownerPending').lean();
+  const p = b?.ownerPending;
+  if (!p?.action || p.waId !== waId) return null;
+  return { ...p, expired: !p.expiresAt || new Date(p.expiresAt).getTime() <= Date.now() };
+}
+
+async function confirmPending(ctx) {
+  const pending = await livePending(ctx.business._id, ctx.waId);
+  if (!pending) return { ok: false, mensaje: 'No hay nada pendiente de confirmar.' };
+  await Business.updateOne({ _id: ctx.business._id }, { $set: { 'ownerPending.action': '' } });
+  if (pending.expired) return { ok: false, mensaje: 'Esa confirmación ya venció (pasaron más de 15 minutos). Dime de nuevo qué hago y lo preparo.' };
+  const mensaje = await executePending(ctx.business, pending, ctx.tz);
+  audit(ctx, pending.action, pending.summary);
+  ctx.pendingSummary = ''; // ya se hizo: no volver a pedir el SÍ
+  return { ok: true, mensaje };
+}
+
+/** Acciones que se aplican al momento (reversibles o de bajo riesgo). */
+async function runImmediate(name, input, ctx) {
+  const { business, tz } = ctx;
+  if (name === 'reanudar_bot') {
+    const canal = input.canal || 'todos';
+    await setPause(business, canal, false);
+    const label = canal === 'todos' ? 'WhatsApp, Messenger e Instagram' : CHANNELS[canal];
+    audit(ctx, 'reanudar_bot', `Reactivar el bot en ${label}`);
+    return { ok: true, mensaje: `Listo, el bot ya está respondiendo en ${label}.` };
+  }
+  if (name === 'quitar_aviso') {
+    const r = await runReadTool('ver_avisos', {}, ctx);
+    const n = r.avisos.find((a) => a.numero === Number(input.numero));
+    if (!n) return { ok: false, error: 'No hay un aviso con ese número.' };
+    await BotConfig.updateOne({ business: business._id }, { $pull: { notices: { text: n.texto } } });
+    audit(ctx, 'quitar_aviso', `Quitar el aviso "${n.texto}"`);
+    return { ok: true, mensaje: `Listo, quité el aviso "${n.texto}".` };
+  }
+  if (name === 'cambiar_estado_registro') {
+    if (!/^[a-f0-9]{24}$/i.test(String(input.id || ''))) return { ok: false, error: 'Id no válido; consulta ver_agenda.' };
+    if (!STATUS_LABEL[input.estado]) return { ok: false, error: 'Estado no válido.' };
+    const rec = await ManagedRecord.findOne({ _id: input.id, business: business._id });
+    if (!rec) return { ok: false, error: 'No encontré ese registro.' };
+    rec.status = input.estado;
+    await rec.save();
+    const what = `${RECORD_TYPE_META[rec.type]?.label || 'Registro'}${rec.customer?.name ? ` de ${rec.customer.name}` : ''}${rec.scheduledAt ? ` (${fmtLocal(tz, rec.scheduledAt)})` : ''}`;
+    audit(ctx, 'registro', `${what} → ${input.estado}`);
+    return { ok: true, mensaje: `Listo: ${what} quedó *${input.estado}*.` };
+  }
+  if (name === 'confirmar_accion') return confirmPending(ctx);
+  if (name === 'cancelar_accion') {
+    await Business.updateOne({ _id: business._id }, { $set: { 'ownerPending.action': '' } });
+    ctx.pendingSummary = '';
+    return { ok: true, mensaje: 'Cancelado, no cambié nada.' };
+  }
+  return { error: 'herramienta desconocida' };
+}
+
+/** Ejecuta una herramienta pedida por el modelo (lista blanca). */
+export async function runOwnerTool(name, input, ctx) {
+  if (!TOOLS.some((t) => t.name === name)) return { error: 'herramienta no permitida' };
+  ctx.used = [...(ctx.used || []), name];
+  let out;
+  if (NEEDS_CONFIRM.has(name)) out = await prepareAction(name, input || {}, ctx);
+  else if (IMMEDIATE.has(name)) out = await runImmediate(name, input || {}, ctx);
+  else out = await runReadTool(name, input || {}, ctx);
+  if (out?.mensaje) ctx.notes.push(out.mensaje);
+  return out;
+}
+
 /* ── Mensaje del dueño ─────────────────────────────────────────────────────── */
 
-const YES = new Set(['si', 'sí', 'si confirmo', 'confirmo', 'confirmar', 'si por favor', 'dale', 'ok', 'va', 'claro', 'si adelante']);
-const NO = new Set(['no', 'cancelar', 'cancela', 'mejor no', 'no gracias']);
+// Confirmación directa (sin pasar por la IA): solo frases cortas inequívocas.
+const YES_RE = /^(si|sip|claro|dale|va|ok|okay|adelante|hazlo|confirmo|confirmar|de acuerdo|perfecto|correcto)( (si|por favor|porfa|hazlo|adelante|confirmo|gracias|dale))*$/;
+const NO_RE = /^(no|nop|cancela|cancelar|mejor no|no gracias|olvidalo|dejalo|dejalo asi)$/;
+const MODE_RE = /^(?:(?:cambia(?:r)? a|pasa(?:r)? a|activa(?:r)?(?: el)?|entra(?:r)? (?:al|en)|vuelve a|volver a|regresa(?:r)? a) )?modo (cliente|dueno)$/;
+
+const HISTORY_TURNS = 12;
+const HISTORY_WINDOW_MS = 3 * 60 * 60 * 1000; // charla reciente; lo viejo ya no aplica
+
+// Puntos de prueba: las pruebas automáticas cambian el envío y la IA.
+let deps = { send: sendText, ai: generateReplyWithTools };
+export function __setOwnerTestHooks(hooks) {
+  deps = { send: sendText, ai: generateReplyWithTools, ...(hooks || {}) };
+}
+
+async function say(business, phoneNumberId, waId, text, { remember = true } = {}) {
+  await deps.send({ phoneNumberId: phoneNumberId || business.whatsappPhoneNumberId, to: waId, text });
+  if (remember) await OwnerMessage.create({ business: business._id, waId, role: 'assistant', text: text.slice(0, 4000) }).catch(() => {});
+}
+
+/** Últimos mensajes recientes de la charla, listos para la IA (alternados). */
+async function recentHistory(businessId, waId) {
+  const rows = await OwnerMessage.find({ business: businessId, waId, createdAt: { $gte: new Date(Date.now() - HISTORY_WINDOW_MS) } })
+    .sort({ createdAt: -1 })
+    .limit(HISTORY_TURNS)
+    .lean();
+  const out = [];
+  for (const r of rows.reverse()) {
+    const last = out[out.length - 1];
+    if (last && last.role === r.role) last.content += `\n${r.text}`;
+    else out.push({ role: r.role, content: r.text });
+  }
+  while (out.length && out[0].role !== 'user') out.shift();
+  return out;
+}
+
+function systemPrompt({ business, tz, pausedLine, pending }) {
+  const { h, m } = localParts(tz);
+  return `Eres el asistente personal de administración de RenBotIA para el DUEÑO de "${business.name}". Te escribe desde su WhatsApp. Actúa como un asistente de confianza: entiende lo que quiere aunque lo diga a medias, usa lo que ya se habló en esta charla y resuelve en vez de mandar menús.
+Hora local del negocio: ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}.
+Estado ahora: ${pausedLine}.${pending ? `\nAcción pendiente de su confirmación: ${pending}. Si en su último mensaje acepta (aunque sea con otras palabras), usa confirmar_accion; si la rechaza o dice que era prueba, usa cancelar_accion; si pide un cambio, prepara la acción de nuevo con el ajuste.` : ''}
+
+Cómo responder:
+- Español de México, breve (máximo 6 líneas), cálido y directo. Negritas con *texto* (un asterisco, formato de WhatsApp); nunca ** ni otro Markdown. Máximo un emoji.
+- Si la intención es clara, actúa: usa la herramienta y di qué hiciste. Pregunta solo si de verdad falta un dato, y una sola pregunta.
+- Respuestas cortas como "en todos", "a las 6", "sí" o "el de Laura" completan lo último que se habló.
+- "Cancela la pausa", "quita la pausa" o "ya no lo pauses" con el bot en pausa = reactivarlo (reanudar_bot). Solo es cancelar_accion si hay una acción pendiente.
+- Si pide reactivar sin decir canal, reactiva todos ("todos").
+- Antes de que responda SÍ, habla en futuro ("Voy a pausar…", "Agrego este aviso…"); en pasado solo lo que ya hizo una herramienta.
+- Solo las herramientas cambian cosas. Nunca digas que pausaste, reactivaste, agregaste, quitaste o confirmaste algo si no llamaste la herramienta en este turno.
+- "Todos los canales" = WhatsApp, Messenger e Instagram. Horas en 24 h para las herramientas (6 de la tarde = 18:00).
+- No inventes cifras ni estados: consulta con las herramientas. Si pregunta si el bot está activo o pausado, usa ver_estado.
+- Pausar, agregar avisos y agregar preguntas: llama SIEMPRE la herramienta en ese mismo turno (así queda lista) y luego pide que responda *SÍ*; nunca pidas el SÍ sin haberla llamado. Reactivar el bot, quitar avisos y cambiar el estado de la agenda se aplican al momento: confírmalo en una línea.
+- Nunca respondas vacío: si ya estaba hecho lo que pide, dilo (ej. "Ya está activo en todos tus canales").
+- No ofrezcas la lista de lo que puedes hacer salvo que te lo pida o salude por primera vez.
+
+Límites (por seguridad): no puedes facturación, planes, pagos, tarjetas, borrar datos, desconectar canales, ver contraseñas o tokens, ni escribir a clientes. Para eso, guíalo al panel en renbotia.com: Entrenamiento (preguntas, tono, horario), Conversaciones (responder y tomar el control), Gestión (agenda), Conexiones (canales y este WhatsApp), Equipo, Facturación (plan, tarjeta y créditos).`;
+}
 
 /**
  * Atiende un mensaje del dueño. Devuelve true si lo atendió (el webhook no debe
@@ -409,12 +695,13 @@ export async function handleOwnerMessage({ business: base, waId, msg, phoneNumbe
   if (!entry) return false;
   const text = msg.type === 'text' ? String(msg.text?.body || '').trim() : '';
   const n = norm(text);
+  const mode = MODE_RE.exec(n)?.[1];
 
   // Modo cliente: el dueño prueba su bot como si fuera cliente durante 30 min.
   if (entry.customerModeUntil && new Date(entry.customerModeUntil).getTime() > Date.now()) {
-    if (n === 'modo dueno') {
+    if (mode === 'dueno') {
       await Business.updateOne({ _id: business._id, 'ownerWhatsApp.waId': waId }, { $unset: { 'ownerWhatsApp.$.customerModeUntil': '' } });
-      await reply(business, phoneNumberId, waId, 'Volviste al *modo dueño*. ¿En qué te ayudo?');
+      await say(business, phoneNumberId, waId, 'Volviste al *modo dueño*. ¿En qué te ayudo?');
       return true;
     }
     return false;
@@ -423,53 +710,50 @@ export async function handleOwnerMessage({ business: base, waId, msg, phoneNumbe
   // Vence por inactividad (30 días sin usarlo).
   if (Date.now() - new Date(entry.lastUsedAt || entry.linkedAt).getTime() > INACTIVE_MS) {
     await Business.updateOne({ _id: business._id }, { $pull: { ownerWhatsApp: { waId } } });
-    await reply(business, phoneNumberId, waId, 'Tu vinculación venció por 30 días sin uso. Vuelve a vincular este número desde tu panel: Conexiones → WhatsApp.');
+    await say(business, phoneNumberId, waId, 'Tu vinculación venció por 30 días sin uso. Vuelve a vincular este número desde tu panel: Conexiones → WhatsApp.', { remember: false });
     return true;
   }
   await Business.updateOne({ _id: business._id, 'ownerWhatsApp.waId': waId }, { $set: { 'ownerWhatsApp.$.lastUsedAt': new Date() } });
 
   if (!text) {
-    await reply(business, phoneNumberId, waId, 'Por ahora entiendo solo mensajes de texto.');
+    await say(business, phoneNumberId, waId, 'Por ahora entiendo solo mensajes de texto. Escríbeme lo que necesitas.', { remember: false });
     return true;
   }
-  if (n === 'modo cliente') {
+  if (mode === 'cliente') {
     await Business.updateOne(
       { _id: business._id, 'ownerWhatsApp.waId': waId },
       { $set: { 'ownerWhatsApp.$.customerModeUntil': new Date(Date.now() + CUSTOMER_MODE_MS) } }
     );
-    await reply(business, phoneNumberId, waId, 'Durante 30 minutos te contesto como a un cliente, para que pruebes tu bot. Escribe *modo dueño* para volver.');
+    await say(business, phoneNumberId, waId, 'Durante 30 minutos te contesto como a un cliente, para que pruebes tu bot. Escribe *modo dueño* para volver.');
+    return true;
+  }
+  if (mode === 'dueno') {
+    await say(business, phoneNumberId, waId, 'Ya estás en *modo dueño*. ¿En qué te ayudo?');
     return true;
   }
 
+  await OwnerMessage.create({ business: business._id, waId, role: 'user', text: text.slice(0, 1000) }).catch(() => {});
   const tz = (await BotConfig.findOne({ business: business._id }).select('schedule.timezone').lean())?.schedule?.timezone || 'America/Mexico_City';
+  const ctx = { business, waId, tz, sub: null, pendingSummary: '', notes: [] };
 
-  // Confirmación de una acción pendiente.
-  const pending = business.ownerPending;
-  if (pending?.action && pending.waId === waId && pending.expiresAt && new Date(pending.expiresAt).getTime() > Date.now()) {
-    if (YES.has(n)) {
+  // Confirmación directa de una acción pendiente ("sí", "dale", "no").
+  const pending = await livePending(business._id, waId);
+  if (pending && (YES_RE.test(n) || NO_RE.test(n))) {
+    if (NO_RE.test(n)) {
       await Business.updateOne({ _id: business._id }, { $set: { 'ownerPending.action': '' } });
-      const result = await executePending(business, pending, tz);
-      void logAudit({
-        businessId: business._id,
-        userId: business.owner,
-        action: `owner.whatsapp.${pending.action}`,
-        summary: `Desde WhatsApp (${maskWaId(waId)}): ${pending.summary}.`,
-      });
-      await reply(business, phoneNumberId, waId, result);
-      return true;
+      await say(business, phoneNumberId, waId, 'Cancelado, no cambié nada.');
+    } else {
+      const r = await confirmPending(ctx);
+      await say(business, phoneNumberId, waId, r.mensaje);
     }
-    await Business.updateOne({ _id: business._id }, { $set: { 'ownerPending.action': '' } });
-    if (NO.has(n)) {
-      await reply(business, phoneNumberId, waId, 'Cancelado, no cambié nada.');
-      return true;
-    }
+    return true;
   }
 
   // Tope diario de mensajes al asistente.
   const day = new Date().toISOString().slice(0, 10);
   const used = business.ownerUsage?.day === day ? business.ownerUsage.count : 0;
   if (used >= DAILY_CAP) {
-    await reply(business, phoneNumberId, waId, 'Llegaste al límite de mensajes de hoy con tu asistente. Mañana seguimos, o entra a tu panel en renbotia.com.');
+    await say(business, phoneNumberId, waId, 'Llegaste al límite de mensajes de hoy con tu asistente. Mañana seguimos, o entra a tu panel en renbotia.com.', { remember: false });
     return true;
   }
   await Business.updateOne({ _id: business._id }, { $set: { ownerUsage: { day, count: used + 1 } } });
@@ -478,36 +762,53 @@ export async function handleOwnerMessage({ business: base, waId, msg, phoneNumbe
   if (!sub) return true;
   await applyLazyReset(sub);
   if (!hasBalance(sub, 1)) {
-    await reply(business, phoneNumberId, waId, 'Tu bot se quedó sin saldo este mes. Recarga en tu panel para seguir usándolo.');
+    await say(business, phoneNumberId, waId, 'Tu bot se quedó sin saldo este mes. Recarga en tu panel para seguir usándolo.', { remember: false });
     return true;
   }
+  ctx.sub = sub;
 
-  const ctx = { business, waId, tz, pendingSummary: '' };
-  const { h, m } = localParts(tz);
-  const system = `Eres el asistente de administración de RenBotIA para el DUEÑO del negocio "${business.name}", que te escribe desde su WhatsApp personal.
-Hora local del negocio: ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}.
-Responde en español de México, breve (máximo 6 líneas), claro y amable. Para negritas usa *texto* con UN asterisco (formato de WhatsApp); nunca uses ** ni otro Markdown. Máximo un emoji por mensaje.
-Usa las herramientas para consultar datos o preparar cambios. NO inventes cifras: solo usa lo que regresan las herramientas.
-Solo puedes: dar resúmenes, leads calientes y pendientes; pausar o reactivar el bot; agregar, listar o quitar avisos temporales; agregar preguntas frecuentes.
-NO puedes: facturación, planes, pagos, borrar datos, desconectar canales, ver contraseñas o tokens, ni escribir a clientes. Si lo pide, dile que lo haga en su panel en renbotia.com.
-Cuando una herramienta deja algo "pendiente de confirmación", explica en una línea qué se hará y pide que responda *SÍ* para confirmar.
-Si saluda o pide ayuda, menciona brevemente lo que puedes hacer.`;
+  const states = pauseState(business, tz);
+  const paused = states.filter((s) => s.bot !== 'activo');
+  const pausedLine = paused.length
+    ? `${paused.map((s) => `${s.canal} ${s.bot}`).join('; ')}${paused.length < states.length ? '; el resto activo' : ''}`
+    : 'el bot está activo en todos sus canales';
+  // El asistente del dueño maneja su negocio: usa el modelo más confiable en
+  // todos los planes (es poco volumen: máx. DAILY_CAP mensajes al día).
+  const model = OWNER_MODEL;
+  const history = await recentHistory(business._id, waId);
+  const messages = history.length && history[history.length - 1].role === 'user' ? history : [...history, { role: 'user', content: text.slice(0, 1000) }];
 
+  const system = systemPrompt({ business, tz, pausedLine, pending: pending && !pending.expired ? pending.summary : '' });
+  const executeTool = (name, input) => runOwnerTool(name, input, ctx);
   let result;
   try {
-    result = await generateReplyWithTools({
-      system,
-      messages: [{ role: 'user', content: text.slice(0, 1000) }],
-      tools: TOOLS,
-      model: MODEL_BY_PLAN.free,
-      executeTool: async (name, input) => {
-        if (!TOOLS.some((t) => t.name === name)) return { error: 'herramienta no permitida' };
-        return MUTATING.has(name) ? prepareAction(name, input || {}, ctx) : runReadTool(name, input || {}, ctx);
-      },
-    });
+    result = await deps.ai({ system, messages, tools: TOOLS, model, executeTool });
+    // Candado: si afirma haber cambiado algo sin usar la herramienta, se le
+    // corrige una vez (nunca le decimos al dueño que se hizo algo que no pasó).
+    if (claimsUnbackedAction(result.text, ctx)) {
+      const retry = await deps.ai({
+        system,
+        messages: [
+          ...messages,
+          { role: 'assistant', content: result.text },
+          {
+            role: 'user',
+            content:
+              '[Aviso del sistema, no del dueño] No llamaste ninguna herramienta en ese turno, así que NADA cambió. Si el dueño pidió una acción, llama ahora la herramienta correcta; si no, corrige tu respuesta sin afirmar cambios.',
+          },
+        ],
+        tools: TOOLS,
+        model,
+        executeTool,
+      });
+      for (const k of ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheCreationTokens', 'totalTokens', 'billableTokens']) {
+        result[k] = (result[k] || 0) + (retry[k] || 0);
+      }
+      result.text = retry.text;
+    }
   } catch (err) {
     logger.warn(`Dueño por WhatsApp: IA no disponible: ${err.message}`);
-    await reply(business, phoneNumberId, waId, 'En este momento no puedo responder. Intenta en unos minutos.');
+    await say(business, phoneNumberId, waId, 'En este momento no puedo responder. Intenta en unos minutos.', { remember: false });
     return true;
   }
 
@@ -520,14 +821,38 @@ Si saluda o pide ayuda, menciona brevemente lo que puedes hacer.`;
     cacheReadTokens: result.cacheReadTokens,
     cacheCreationTokens: result.cacheCreationTokens,
     totalTokens: result.totalTokens,
-    model: MODEL_BY_PLAN.free,
+    model,
     source: 'owner',
   });
 
-  let out = (result.text || '').trim() || 'Listo.';
-  if (ctx.pendingSummary && !/s[ií]/i.test(out.slice(-80))) out += `\n\n${ctx.pendingSummary}. Responde *SÍ* para confirmar.`;
-  await reply(business, phoneNumberId, waId, out.slice(0, 3500));
+  await say(business, phoneNumberId, waId, composeReply(result.text, ctx).slice(0, 3500));
   return true;
+}
+
+const CHANGE_TOOLS = new Set([...NEEDS_CONFIRM, ...IMMEDIATE]);
+const ACTION_CLAIM =
+  /(?<![a-zà-ÿ])(pausé|reactivé|agregué|quité|confirmé|activé)(?![a-zà-ÿ])|qued[oó] (en pausa|pausad|confirmad|reactivad|activ)|ya (est[aá]|qued[oó]) (pausad|en pausa|confirmad|reactivad)/i;
+
+/** ¿El texto dice que se hizo un cambio sin que se usara una herramienta que cambia algo? */
+export function claimsUnbackedAction(text, ctx) {
+  if (!text || ctx.pendingSummary) return false;
+  if ((ctx.used || []).some((n) => CHANGE_TOOLS.has(n))) return false;
+  return ACTION_CLAIM.test(text);
+}
+
+/**
+ * Texto final para el dueño: nunca vacío ni "(sin respuesta)"; si quedó algo
+ * pendiente, siempre termina pidiendo el SÍ.
+ */
+export function composeReply(aiText, ctx) {
+  let out = String(aiText || '').trim();
+  if (out === '(sin respuesta)') out = '';
+  if (!out) out = ctx.notes.join('\n');
+  // ¿Ya pide el SÍ? (\b no sirve con la Í acentuada)
+  if (ctx.pendingSummary && !/(^|[^A-Za-zÀ-ÿ])S[IÍ](?![A-Za-zÀ-ÿ])/.test(out)) {
+    out = `${out ? `${out}\n\n` : ''}${ctx.pendingSummary}. ¿Lo hago? Responde *SÍ* o dime qué cambiar.`;
+  }
+  return out || 'Listo.';
 }
 
 /** Estado para el panel (números enmascarados). */
