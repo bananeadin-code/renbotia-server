@@ -19,3 +19,4 @@ dist/
 # Sistema
 .DS_Store
 Thumbs.db
+loadtest-report.json

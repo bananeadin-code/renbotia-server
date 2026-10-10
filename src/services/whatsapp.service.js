@@ -15,7 +15,9 @@ import { toWhatsAppNumber } from '../utils/phone.js';
  * se omite el envío, sin tumbar el proceso. El producto sigue vivo en simulador.
  */
 
-const GRAPH = 'https://graph.facebook.com';
+// Solo para pruebas de carga locales se puede apuntar a un servidor falso;
+// en producción la variable no existe y se usa la Graph API real.
+const GRAPH = process.env.WHATSAPP_GRAPH_URL || 'https://graph.facebook.com';
 
 /** ¿Hay credenciales suficientes para ENVIAR por la Cloud API? */
 export function isConfigured() {
