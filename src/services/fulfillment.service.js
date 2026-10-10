@@ -182,7 +182,7 @@ async function alreadyRecorded(pi) {
 }
 
 let running = false;
-export async function reconcilePayments({ now = Date.now() } = {}) {
+export async function reconcilePayments({ now = Date.now(), windowMs = RECONCILE_WINDOW_MS } = {}) {
   if (running) return { skipped: true };
   if (!String(process.env.STRIPE_SECRET_KEY || '').startsWith('sk_')) return { skipped: true };
   running = true;
@@ -191,7 +191,7 @@ export async function reconcilePayments({ now = Date.now() } = {}) {
     let startingAfter;
     for (let page = 0; page < 10; page++) {
       const res = await deps.list({
-        created: { gte: Math.floor((now - RECONCILE_WINDOW_MS) / 1000) },
+        created: { gte: Math.floor((now - windowMs) / 1000) },
         limit: 100,
         ...(startingAfter ? { starting_after: startingAfter } : {}),
       });
@@ -227,9 +227,10 @@ export async function reconcilePayments({ now = Date.now() } = {}) {
 
 export function startPaymentReconciler() {
   if (process.env.RECONCILE_ENABLED === 'false') return;
-  const run = () => reconcilePayments().catch((err) => logger.warn(`Conciliación: ${err.message}`));
-  setTimeout(run, 60 * 1000).unref?.(); // una pasada al arrancar
-  const timer = setInterval(run, 10 * 60 * 1000);
+  const run = (opts) => reconcilePayments(opts).catch((err) => logger.warn(`Conciliación: ${err.message}`));
+  // Al arrancar revisa 30 días (cubre cualquier compra anterior a este arreglo).
+  setTimeout(() => run({ windowMs: 30 * 24 * 60 * 60 * 1000 }), 60 * 1000).unref?.();
+  const timer = setInterval(() => run(), 10 * 60 * 1000);
   timer.unref?.();
   logger.info('Conciliación de pagos: revisión cada 10 min.');
 }
