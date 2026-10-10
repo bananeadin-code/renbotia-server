@@ -8,7 +8,7 @@ import { ApiError } from '../utils/ApiError.js';
  */
 let stripe = null;
 
-function getStripe() {
+export function getStripe() {
   if (!env.stripe.secretKey) {
     throw new ApiError(503, 'Los pagos no están configurados (falta STRIPE_SECRET_KEY)');
   }

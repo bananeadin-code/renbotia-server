@@ -11,6 +11,7 @@ import { encryptLegacySecrets } from './services/encryptSecrets.service.js';
 import { syncPlans } from './services/syncPlans.service.js';
 import { backfillRecordChannels } from './services/management.service.js';
 import { startReminderScheduler } from './services/reminder.service.js';
+import { startPaymentReconciler } from './services/fulfillment.service.js';
 
 /**
  * Punto de entrada: conecta a la base de datos y arranca el servidor HTTP.
@@ -37,6 +38,7 @@ async function start() {
   // Seguimiento automático a clientes que dejaron de responder (Pro/Elite).
   startFollowUpScheduler();
   startReminderScheduler();
+  startPaymentReconciler(); // pagos cobrados que no se entregaron
   // Respaldo cifrado por correo (gratis, mientras no haya backups de Atlas).
   startBackupScheduler();
   // Reporte semanal del lunes al dueño (resultados en pesos, leads y pendientes).

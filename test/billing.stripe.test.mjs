@@ -152,7 +152,8 @@ describe('cobros con Stripe (modo prueba)', { skip }, () => {
       const rs = await Promise.all([1, 2, 3].map(() => call('POST', '/billing/confirm', { paymentIntentId: intent.data.paymentIntentId })));
       const afterT = (await Subscription.findOne({ business: o.business._id })).extraTokens;
       assert.equal(afterT - before, 100000);
-      assert.equal(rs.filter(([, j]) => j?.data?.alreadyProcessed).length, 2);
+      // Ya se entregó en el servidor al cobrar: los 3 confirm solo lo confirman.
+      assert.equal(rs.filter(([, j]) => j?.data?.alreadyProcessed).length, 3);
 
       [st] = await call('POST', '/billing/confirm', { paymentIntentId: intent.data.paymentIntentId }, T2, other.business._id);
       assert.equal(st, 403);
@@ -161,7 +162,8 @@ describe('cobros con Stripe (modo prueba)', { skip }, () => {
     it('mejora de plan, tarjeta protegida y renovación manual con candado', async () => {
       let [st, js] = await call('POST', '/billing/intent', { kind: 'plan', planKey: 'pro' });
       [st, js] = await call('POST', '/billing/confirm', { paymentIntentId: js.data.paymentIntentId });
-      assert.equal(st, 201);
+      assert.equal(st, 200); // ya entregado al cobrar
+      assert.equal(js.data.upgraded, true);
       [st] = await call('POST', '/billing/intent', { kind: 'plan', planKey: 'pro' });
       assert.equal(st, 400);
       [st] = await call('DELETE', '/billing/payment-method');
@@ -174,8 +176,10 @@ describe('cobros con Stripe (modo prueba)', { skip }, () => {
         { $set: { renewalDate: new Date(Date.now() - 3600e3), status: 'vencida', pastDueSince: new Date(), tokensUsedThisPeriod: 5000 } }
       );
       [st, js] = await call('POST', '/billing/intent', { kind: 'renewal' });
+      // La primera ya se cobró y entregó al momento: un segundo intento no
+      // encuentra renovación pendiente (nunca cobra dos veces).
       const [st2] = await call('POST', '/billing/intent', { kind: 'renewal' });
-      assert.equal(st2, 409);
+      assert.equal(st2, 400);
       [st] = await call('POST', '/billing/confirm', { paymentIntentId: js.data.paymentIntentId });
       const s = await Subscription.findOne({ business: o.business._id });
       assert.equal(s.status, 'activa');

@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { qualifyReferral } from '../services/referral.service.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiError } from '../utils/ApiError.js';
 import { PLANS, CREDIT_PACKS } from '../config/constants.js';
@@ -13,15 +12,14 @@ import {
   detachPaymentMethod,
 } from '../services/stripe.service.js';
 import { ensureCustomer, ensureProfile } from '../services/billingProfile.service.js';
-import { sendPurchaseReceipt } from '../services/email.service.js';
 import { loadBusinessBundle } from '../services/business.service.js';
-import { addExtraTokens, isPaidPlanKey, nextPeriodPlanKey } from '../services/token.service.js';
-import { finalizeRenewal, renewalKeyFor, renewSubscription } from '../services/renewal.service.js';
+import { isPaidPlanKey, nextPeriodPlanKey, computeBalance } from '../services/token.service.js';
+import { renewalKeyFor, renewSubscription } from '../services/renewal.service.js';
 import { logAudit } from '../services/audit.service.js';
-import { addMonths } from '../utils/dates.js';
+import { fulfillPaymentIntent } from '../services/fulfillment.service.js';
+import { logger } from '../utils/logger.js';
 import { Business } from '../models/Business.js';
 import { Subscription } from '../models/Subscription.js';
-import { Plan } from '../models/Plan.js';
 import { Payment } from '../models/Payment.js';
 
 const findPlan = (key) => PLANS.find((p) => p.key === key);
@@ -165,6 +163,17 @@ export const createIntent = asyncHandler(async (req, res) => {
     throw err;
   }
 
+  // Cobrado al momento (sin verificación del banco): se entrega YA en el
+  // servidor, sin depender de que el navegador siga abierto. Si algo falla, el
+  // conciliador lo reintenta en minutos.
+  if (pi.status === 'succeeded') {
+    try {
+      await fulfillPaymentIntent(pi);
+    } catch (err) {
+      logger.error(`Compra ${pi.id}: cobrada pero no entregada aún (se reintentará): ${err.message}`);
+    }
+  }
+
   res.json({
     success: true,
     data: {
@@ -185,24 +194,15 @@ export const confirmSchema = z.object({
 // Registra el pago ANTES de entregar: el índice único de stripeSessionId hace
 // que, si llegan dos confirmaciones a la vez, solo una entregue. Devuelve null
 // si este pago ya se había procesado.
-async function claimPayment(doc) {
-  try {
-    return await Payment.create(doc);
-  } catch (err) {
-    if (err?.code === 11000) return null;
-    throw err;
-  }
-}
-
 /**
  * POST /api/billing/confirm
  * Se llama tras confirmar el pago en el navegador. Verifica en Stripe que el
- * PaymentIntent es de este usuario y está 'succeeded', y entonces entrega (plan,
- * créditos o renovación) UNA sola vez.
+ * PaymentIntent es de este usuario y está 'succeeded', y entrega (plan,
+ * créditos o renovación) UNA sola vez. Normalmente ya se entregó en el servidor
+ * al cobrar; aquí solo se confirma (idempotente).
  */
 export const confirmCheckout = asyncHandler(async (req, res) => {
   const { paymentIntentId } = req.body;
-
   const pi = await retrievePaymentIntent(paymentIntentId);
 
   // Seguridad: la metadata la pone el servidor al crear el pago; debe coincidir.
@@ -210,124 +210,22 @@ export const confirmCheckout = asyncHandler(async (req, res) => {
     throw ApiError.forbidden('Este pago no te pertenece');
   }
   if (pi.status !== 'succeeded') {
-    throw new ApiError(402, 'El pago aún no se ha completado', {
-      code: 'PAYMENT_NOT_COMPLETED',
-      status: pi.status,
-    });
+    throw new ApiError(402, 'El pago aún no se ha completado', { code: 'PAYMENT_NOT_COMPLETED', status: pi.status });
   }
-
-  const type = pi.metadata?.type;
   const business = await Business.findOne({ _id: pi.metadata.businessId, owner: req.userId });
   if (!business) throw ApiError.forbidden('Negocio inválido para esta compra');
-  const amountMXN = pi.amount / 100;
 
-  if (type === 'plan') {
-    const plan = findPlan(pi.metadata.planKey);
-    if (!plan) throw ApiError.badRequest('Plan inválido en el pago');
-
-    const claim = await claimPayment({
-      user: req.userId,
-      business: business._id,
-      type: 'plan',
-      description: `Plan ${plan.name}`,
-      amountMXN,
-      planKey: plan.key,
-      stripeSessionId: pi.id,
-    });
-    if (!claim) return res.json({ success: true, data: { alreadyProcessed: true, type } });
-
-    let bundle;
-    try {
-      await upgradeSubscriptionPlan(business._id, plan.key);
-      bundle = await loadBusinessBundle(business._id);
-    } catch (err) {
-      await Payment.deleteOne({ _id: claim._id }); // libera para reintentar
-      throw err;
-    }
-
-    void logAudit({
-      businessId: business._id,
-      userId: req.userId,
-      action: 'plan.upgrade',
-      summary: `Mejoró al plan ${plan.name}.`,
-      metadata: { planKey: plan.key, amountMXN },
-    });
-    void sendPurchaseReceipt({
-      userId: req.userId,
-      businessName: business.name,
-      type: 'plan',
-      description: `Plan ${plan.name}`,
-      amountMXN,
-      reference: pi.id,
-    });
-    void qualifyReferral(req.userId); // pagó: el referido cuenta
-    return res.status(201).json({ success: true, data: { type: 'plan', bundle, upgraded: true } });
+  const r = await fulfillPaymentIntent(pi);
+  if (!r.applied && !r.alreadyProcessed) throw ApiError.badRequest('No se pudo identificar la compra de este pago.');
+  if (r.type === 'plan') {
+    const bundle = await loadBusinessBundle(business._id);
+    return res.status(r.applied ? 201 : 200).json({ success: true, data: { type: 'plan', bundle, upgraded: true, alreadyProcessed: !r.applied } });
   }
-
-  if (type === 'credits') {
-    const pack = findPack(pi.metadata.packKey);
-    if (!pack) throw ApiError.badRequest('Paquete inválido en el pago');
-
-    const subscription = await Subscription.findOne({ business: business._id }).populate('plan');
-    if (!subscription) throw ApiError.notFound('No hay suscripción para acreditar');
-
-    const claim = await claimPayment({
-      user: req.userId,
-      business: business._id,
-      type: 'credits',
-      description: pack.name,
-      amountMXN,
-      tokens: pack.tokens,
-      packKey: pack.key,
-      stripeSessionId: pi.id,
-    });
-    if (!claim) return res.json({ success: true, data: { alreadyProcessed: true, type } });
-
-    let balance;
-    try {
-      balance = await addExtraTokens(subscription, pack.tokens);
-    } catch (err) {
-      await Payment.deleteOne({ _id: claim._id });
-      throw err;
-    }
-
-    void sendPurchaseReceipt({
-      userId: req.userId,
-      businessName: business.name,
-      type: 'credits',
-      description: pack.name,
-      amountMXN,
-      tokens: pack.tokens,
-      reference: pi.id,
-      availableAfter: balance.available,
-    });
-    void logAudit({
-      businessId: business._id,
-      userId: req.userId,
-      action: 'credits.purchase',
-      summary: `Compró ${pack.name}.`,
-      metadata: { packKey: pack.key, amountMXN, tokens: pack.tokens },
-    });
-    void qualifyReferral(req.userId); // pagó: el referido cuenta
-    return res.json({ success: true, data: { type: 'credits', balance } });
+  if (r.type === 'credits') {
+    const sub = await Subscription.findOne({ business: business._id }).populate('plan');
+    return res.json({ success: true, data: { type: 'credits', balance: r.balance || computeBalance(sub), alreadyProcessed: !r.applied } });
   }
-
-  if (type === 'renewal') {
-    const sub = await Subscription.findOne({ _id: pi.metadata.subscriptionId, business: business._id });
-    if (!sub) throw ApiError.notFound('No hay suscripción para renovar');
-    const opened = await finalizeRenewal({
-      subscriptionId: sub._id,
-      dueDate: new Date(Number(pi.metadata.dueDate)),
-      planKey: pi.metadata.planKey,
-      paymentIntentId: pi.id,
-      amountMXN,
-      userId: req.userId,
-    });
-    await Subscription.updateOne({ _id: sub._id }, { $set: { renewalLockUntil: null } });
-    return res.json({ success: true, data: { type: 'renewal', renewed: true, alreadyProcessed: !opened } });
-  }
-
-  throw ApiError.badRequest('Tipo de pago desconocido');
+  return res.json({ success: true, data: { type: 'renewal', renewed: true, alreadyProcessed: !r.applied } });
 });
 
 /**
@@ -344,36 +242,6 @@ export const listPayments = asyncHandler(async (req, res) => {
 async function loadSub(businessId) {
   const sub = await Subscription.findOne({ business: businessId }).populate('plan');
   if (!sub) throw ApiError.notFound('No hay suscripción para este negocio');
-  return sub;
-}
-
-/**
- * Aplica una mejora de plan de forma INMEDIATA sobre la suscripción existente:
- * cambia el plan, reinicia el periodo y el consumo del cupo (los créditos extra
- * comprados se conservan) y deja la suscripción activa. Se usa al confirmar el
- * pago de una mejora (Free/Pro → Pro/Elite).
- */
-async function upgradeSubscriptionPlan(businessId, planKey) {
-  const plan = await Plan.findOne({ key: planKey, isActive: true });
-  if (!plan) throw ApiError.badRequest(`Plan inválido: ${planKey}`);
-
-  const sub = await Subscription.findOne({ business: businessId });
-  if (!sub) throw ApiError.notFound('No hay suscripción para este negocio');
-
-  const now = new Date();
-  sub.plan = plan._id;
-  sub.status = 'activa';
-  sub.pendingPlanKey = '';
-  sub.currentPeriodStart = now;
-  sub.renewalDate = addMonths(now, 1);
-  sub.tokensUsedThisPeriod = 0; // arranca el nuevo cupo del plan mejorado
-  sub.lowBalanceNotified = false;
-  // Pagó: cualquier renovación vencida queda saldada por este nuevo periodo.
-  sub.renewalAttempts = 0;
-  sub.nextRenewalAttemptAt = null;
-  sub.pastDueSince = null;
-  sub.lastRenewalError = '';
-  await sub.save();
   return sub;
 }
 
