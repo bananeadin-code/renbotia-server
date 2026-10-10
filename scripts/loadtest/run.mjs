@@ -120,7 +120,8 @@ async function seed() {
 
 /* ── Servidor real ─────────────────────────────────────────────────────────── */
 function startApi() {
-  const child = spawn(process.execPath, ['src/index.js'], {
+  const profile = process.env.LOAD_PROFILE_OUT;
+  const child = spawn(process.execPath, [profile ? 'scripts/loadtest/profiledServer.mjs' : 'src/index.js'], {
     cwd: ROOT,
     env: {
       ...process.env,
@@ -139,7 +140,7 @@ function startApi() {
       ALERT_EMAIL: '',
       LOG_LEVEL: 'error',
     },
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
   });
   child.stderr.on('data', (d) => (startApi.errors = (startApi.errors || '') + d.toString().slice(0, 2000)));
   return child;
@@ -225,6 +226,7 @@ async function panelHit(b, phase) {
     const r = await fetch(`${API}${p}`, { headers: { authorization: `Bearer ${b.token}`, 'cf-connecting-ip': `10.20.${b.i % 250}.${(b.i * 7) % 250}` } });
     await r.arrayBuffer();
     phase.panel.push(Date.now() - t0);
+    (phase.panelByPath[p] ||= []).push(Date.now() - t0);
     if (r.status >= 400) phase.panelErrors[r.status] = (phase.panelErrors[r.status] || 0) + 1;
   } catch {
     phase.panelErrors.network = (phase.panelErrors.network || 0) + 1;
@@ -232,7 +234,7 @@ async function panelHit(b, phase) {
 }
 
 async function runPhase({ name, businesses, msgEverySec, panelEverySec, seconds, pid }) {
-  const phase = { name, businesses: businesses.length, sent: 0, ack: [], ackErrors: {}, e2e: [], lost: 0, pending: [], panel: [], panelErrors: {}, health: [], cpu: [], rss: [] };
+  const phase = { name, businesses: businesses.length, sent: 0, ack: [], ackErrors: {}, e2e: [], lost: 0, pending: [], panel: [], panelByPath: {}, panelErrors: {}, health: [], cpu: [], rss: [] };
   const aiBefore = fake.ai;
   const end = Date.now() + seconds * 1000;
   const timers = [];
@@ -281,6 +283,7 @@ async function runPhase({ name, businesses, msgEverySec, panelEverySec, seconds,
     sin_respuesta_60s: phase.lost,
     panel_ms: summary(phase.panel),
     errores_panel: phase.panelErrors,
+    panel_por_pantalla_p95_ms: Object.fromEntries(Object.entries(phase.panelByPath).map(([k, v]) => [k, pct(v, 95)])),
     salud_ms: summary(phase.health),
     cpu_servidor_pct: { promedio: Math.round(phase.cpu.reduce((a, b) => a + b, 0) / (phase.cpu.length || 1)), max: Math.max(0, ...phase.cpu) },
     memoria_mb: { max: Math.max(0, ...phase.rss) },
@@ -309,11 +312,27 @@ const plan = [
   { name: 'pico: 200 negocios, 3 mensajes/min c/u', businesses: all.slice(0, 200), msgEverySec: 20, panelEverySec: 10, seconds: 90 },
   { name: 'estrés: 200 negocios, 12 mensajes/min c/u', businesses: all.slice(0, 200), msgEverySec: 5, panelEverySec: 10, seconds: 60 },
 ];
-for (const p of plan) {
+// LOAD_PHASES=normal,pico para correr solo algunas fases.
+const only = String(process.env.LOAD_PHASES || '').split(',').filter(Boolean);
+for (const p of plan.filter((x) => !only.length || only.some((o) => x.name.startsWith(o)))) {
   fake.aiPeak = 0;
+  if (process.env.LOAD_PROFILE_OUT) {
+    await new Promise((resolve) => {
+      api.once('message', resolve);
+      api.send('start');
+      setTimeout(resolve, 5000);
+    });
+  }
   const r = await runPhase({ ...p, pid: api.pid });
   results.push(r);
   console.log(JSON.stringify(r, null, 1));
+}
+if (process.env.LOAD_PROFILE_OUT) {
+  await new Promise((resolve) => {
+    api.once('message', resolve);
+    api.send('stop');
+    setTimeout(resolve, 15000);
+  });
 }
 api.kill();
 fakeServer.close();

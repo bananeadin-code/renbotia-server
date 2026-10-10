@@ -17,7 +17,9 @@ export const requireAuth = asyncHandler(async (req, res, next) => {
   }
 
   const payload = verifyAccessToken(token); // lanza si inválido/expirado
-  const user = await User.findById(payload.sub);
+  // Objeto simple (lean): el resto del flujo solo lo LEE; construir el documento
+  // completo de mongoose en cada petición del panel era costoso bajo carga.
+  const user = await User.findById(payload.sub).select('name email role tokenVersion').lean();
 
   if (!user) {
     throw ApiError.unauthorized('El usuario ya no existe');
@@ -35,7 +37,7 @@ export const requireAuth = asyncHandler(async (req, res, next) => {
   if (payload.sid) await assertSessionActive(payload.sid, user._id);
 
   req.user = user;
-  req.userId = user.id;
+  req.userId = String(user._id);
   req.sessionId = payload.sid || null;
   // Contexto de la sesión: dueño de su negocio, colaborador de un proyecto o
   // cuenta (sin negocio / sesiones previas). requireBusiness lo hace cumplir.

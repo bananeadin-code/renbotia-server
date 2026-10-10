@@ -105,6 +105,9 @@ chatSimulationSchema.index({ business: 1, channel: 1, customerPhone: 1 });
 // Canales sin teléfono (Messenger por PSID, widget web por sesión).
 chatSimulationSchema.index({ business: 1, channel: 1, customerId: 1 });
 
+// Bandeja: conversaciones de un negocio por actividad reciente (sin ordenar en memoria).
+chatSimulationSchema.index({ business: 1, updatedAt: -1 });
+
 // Retención: MongoDB borra solo las conversaciones sin actividad (updatedAt) por
 // más de CONVERSATION_RETENTION_DAYS. Cada mensaje nuevo actualiza updatedAt.
 chatSimulationSchema.index(

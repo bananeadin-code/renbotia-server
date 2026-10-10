@@ -222,11 +222,15 @@ async function handleMessage({ business, phoneNumberId, msg, customerName }) {
 
   // Continuar la conversación abierta de este cliente (si existe) para conservar
   // contexto y el modo de relevo (bot/manual).
+  // Solo su _id: processMessage la carga completa (antes se cargaba dos veces).
   const existing = await ChatSimulation.findOne({
     business: business._id,
     channel: 'whatsapp',
     customerPhone: from,
-  }).sort({ updatedAt: -1 });
+  })
+    .sort({ updatedAt: -1 })
+    .select('_id')
+    .lean();
 
   try {
     const result = await processMessage({
@@ -407,7 +411,10 @@ async function handleDmMessage({ business, event, channel, pageToken }) {
     business: business._id,
     channel,
     customerId: senderId,
-  }).sort({ updatedAt: -1 });
+  })
+    .sort({ updatedAt: -1 })
+    .select('_id customerName')
+    .lean();
 
   // Nombre del cliente: solo si aún no lo tenemos, para no consultar a Meta en
   // cada mensaje.

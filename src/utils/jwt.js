@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { env } from '../config/env.js';
 
@@ -15,11 +16,24 @@ import { env } from '../config/env.js';
  *     aunque compartan secreto.
  */
 const ALGO = 'HS256';
+// Llave HMAC preparada UNA vez por secreto: con un string, jsonwebtoken intenta
+// crear una llave pública, falla (excepción) y reintenta como secreta en cada
+// verificación. Con un KeyObject va directo (más rápido bajo carga).
+const keys = new Map();
+const keyOf = (secret) => {
+  let k = keys.get(secret);
+  if (!k) {
+    k = crypto.createSecretKey(Buffer.from(String(secret)));
+    keys.set(secret, k);
+  }
+  return k;
+};
+
 const verifyOpts = { algorithms: [ALGO] };
 
 /** Verifica el token y exige que su `typ` sea el esperado; si no, 401. */
 function verifyTyped(token, secret, expectedTyp) {
-  const payload = jwt.verify(token, secret, verifyOpts);
+  const payload = jwt.verify(token, keyOf(secret), verifyOpts);
   if (payload.typ !== expectedTyp) {
     // Mismo tipo de error que un token inválido → el errorHandler lo mapea a 401.
     throw new jwt.JsonWebTokenError('tipo de token inválido');

@@ -96,7 +96,10 @@ export async function processMessage({
   }
 
   // 2) Configuración del bot
-  const botConfig = await BotConfig.findOne({ business: businessId });
+  // Objeto simple con los valores por defecto del esquema (igual que toObject()
+  // de antes, sin construir el documento: incluye FAQs e imágenes, pesado).
+  const rawConfig = await BotConfig.findOne({ business: businessId }).lean();
+  const botConfig = rawConfig ? BotConfig.applyDefaults(rawConfig) : null;
   if (!botConfig) {
     throw ApiError.notFound('El bot no está configurado');
   }
@@ -107,7 +110,7 @@ export async function processMessage({
   // respete SIEMPRE los límites vigentes (p. ej. Free = tono neutral, sin
   // personalidad ni contexto ampliado). No basta con sanear solo al guardar.
   const planKey = subscription.plan?.key || 'free';
-  const safeConfig = sanitizeBotConfigForPlan(botConfig.toObject(), planKey);
+  const safeConfig = sanitizeBotConfigForPlan(botConfig, planKey);
   // Modelo por plan: Free/Pro en Haiku (barato y rápido), Elite en Sonnet (más
   // capaz, para visión y el módulo de Gestión con herramientas).
   const model = MODEL_BY_PLAN[planKey] || env.anthropic.model;

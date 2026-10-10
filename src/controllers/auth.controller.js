@@ -227,7 +227,10 @@ export const revokeOtherSessions = asyncHandler(async (req, res) => {
 });
 
 export const me = asyncHandler(async (req, res) => {
-  res.json({ success: true, data: { user: req.user } });
+  // Perfil completo (documento con su formato público), no el objeto ligero de requireAuth.
+  const user = await User.findById(req.userId);
+  if (!user) throw ApiError.unauthorized('El usuario ya no existe');
+  res.json({ success: true, data: { user } });
 });
 
 /* ── Contexto (dueño / proyecto) y confirmación de identidad ─────────────── */

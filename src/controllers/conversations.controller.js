@@ -8,7 +8,7 @@ import mongoose from 'mongoose';
 import { ChatSimulation } from '../models/ChatSimulation.js';
 import { ChatAttachment } from '../models/ChatAttachment.js';
 import { UsageLog } from '../models/UsageLog.js';
-import '../models/User.js'; // populate de startedBy
+import { User } from '../models/User.js'; // quién hizo cada prueba del simulador
 import { Business } from '../models/Business.js';
 import { logAudit } from '../services/audit.service.js';
 import { sendText, sendTemplate, listTemplates } from '../services/whatsapp.service.js';
@@ -61,15 +61,59 @@ export const listConversations = asyncHandler(async (req, res) => {
   if (!simulator && !can(req.access, 'conversations', 'view')) {
     throw new ApiError(403, 'Tu rol no incluye las conversaciones.', { code: 'ACCESS_DENIED', module: 'conversations' });
   }
-  const filter = { business: req.businessId, channel: simulator ? 'simulator' : realChannelFilter(req) };
+  const filter = { business: new mongoose.Types.ObjectId(String(req.businessId)), channel: simulator ? 'simulator' : realChannelFilter(req) };
+  // La bandeja solo necesita un RESUMEN de cada conversación: se calcula en la
+  // base (último mensaje, cuántos hay, último mensaje del cliente) en vez de traer
+  // todos los mensajes con sus imágenes a Node (pesado con conversaciones largas).
   const [chats, simulatorCount] = await Promise.all([
-    ChatSimulation.find(filter)
-      .sort({ updatedAt: -1 })
-      .limit(100)
-      .populate(simulator ? { path: 'startedBy', select: 'name email' } : [])
-      .lean(),
+    ChatSimulation.aggregate([
+      { $match: filter },
+      { $sort: { updatedAt: -1 } },
+      { $limit: 100 },
+      {
+        $project: {
+          title: 1,
+          updatedAt: 1,
+          handoffMode: 1,
+          needsAttention: 1,
+          attentionReason: 1,
+          channel: 1,
+          customerName: 1,
+          customerContact: 1,
+          tags: 1,
+          capturedRecordType: 1,
+          hotLead: 1,
+          hotLeadReason: 1,
+          startedBy: 1,
+          messageCount: { $size: { $ifNull: ['$messages', []] } },
+          last: {
+            $let: {
+              vars: { m: { $arrayElemAt: [{ $ifNull: ['$messages', []] }, -1] } },
+              in: { role: '$$m.role', content: { $substrCP: [{ $ifNull: ['$$m.content', ''] }, 0, 90] } },
+            },
+          },
+          lastInboundAt: {
+            $max: {
+              $map: {
+                input: { $filter: { input: { $ifNull: ['$messages', []] }, as: 'm', cond: { $eq: ['$$m.role', 'user'] } } },
+                as: 'm',
+                in: '$$m.timestamp',
+              },
+            },
+          },
+          ...(simulator ? { msgTokens: { $sum: '$messages.tokens' } } : {}),
+        },
+      },
+    ]),
     canSim ? ChatSimulation.countDocuments({ business: req.businessId, channel: 'simulator' }) : 0,
   ]);
+  // Quién hizo cada prueba del simulador (una sola consulta).
+  if (simulator && chats.length) {
+    const ids = [...new Set(chats.map((c) => String(c.startedBy || '')).filter(Boolean))];
+    const users = ids.length ? await User.find({ _id: { $in: ids } }).select('name email').lean() : [];
+    const byId = new Map(users.map((u) => [String(u._id), u]));
+    for (const c of chats) c.startedBy = c.startedBy ? byId.get(String(c.startedBy)) || null : null;
+  }
 
   // Tokens por prueba del simulador (de UsageLog; si es una prueba anterior al
   // registro por conversación, se suman los tokens guardados en sus mensajes).
@@ -83,17 +127,17 @@ export const listConversations = asyncHandler(async (req, res) => {
   }
 
   const conversations = chats.map((c) => {
-    const last = c.messages[c.messages.length - 1];
+    const last = c.last?.role ? c.last : null;
     return {
       id: c._id,
       title: c.title,
-      lastMessage: last ? last.content.slice(0, 90) : '',
+      lastMessage: last ? last.content : '',
       lastRole: last?.role,
       lastAt: c.updatedAt,
       handoffMode: c.handoffMode || 'bot',
       needsAttention: Boolean(c.needsAttention),
       attentionReason: c.attentionReason || '',
-      messageCount: c.messages.length,
+      messageCount: c.messageCount,
       channel: c.channel || 'simulator',
       customerName: c.customerName || '',
       customerContact: c.customerContact || '',
@@ -104,12 +148,15 @@ export const listConversations = asyncHandler(async (req, res) => {
       hotLead: Boolean(c.hotLead),
       hotLeadReason: c.hotLeadReason || '',
       // Ventana de 24h (WhatsApp, Messenger e Instagram; null en simulador y web).
-      whatsappWindow: computeServiceWindow(c),
+      whatsappWindow: computeServiceWindow({
+        channel: c.channel,
+        messages: c.lastInboundAt ? [{ role: 'user', timestamp: c.lastInboundAt }] : [],
+      }),
       ...(simulator
         ? {
             startedBy: c.startedBy ? { name: c.startedBy.name || c.startedBy.email, email: c.startedBy.email } : null,
             tokens:
-              tokensByChat[String(c._id)] ?? (c.messages || []).reduce((n, m) => n + (m.tokens || 0), 0),
+              tokensByChat[String(c._id)] ?? (c.msgTokens || 0),
           }
         : {}),
     };
