@@ -12,8 +12,14 @@ const router = Router();
 // La config la lee el snippet desde el sitio del cliente (otro dominio): CORS
 // abierto y sin credenciales. Sobrescribe el CORS global (solo para esta ruta).
 const openCors = cors({ origin: '*', credentials: false, methods: ['GET'] });
+// El CORS global ya puso "Allow-Credentials: true"; con origin '*' esa mezcla es
+// inválida y el navegador descarta la respuesta. Aquí se quita.
+const noCredentials = (req, res, next) => {
+  res.removeHeader('Access-Control-Allow-Credentials');
+  next();
+};
 router.options('/public/:key', openCors);
-router.get('/public/:key', openCors, widget.publicConfig);
+router.get('/public/:key', openCors, noCredentials, widget.publicConfig);
 // El chat corre dentro del iframe de renbotia.com: same-origin.
 router.post('/public/:key/message', widgetLimiter, validate(widget.widgetMessageSchema), widget.publicMessage);
 router.get('/public/:key/messages', widget.publicThread);
