@@ -21,7 +21,7 @@ export function lowBalanceEmail(p) {
   const available = Number(p.available || 0).toLocaleString('es-MX');
   const greetName = p.customerName ? `Hola ${escapeHtml(p.customerName)},` : 'Hola,';
   const billingUrl = `${env.publicUrl.replace(/\/$/, '')}/dashboard/facturacion`;
-  const subject = `Te quedan pocos créditos${p.businessName ? ` — ${escapeHtml(p.businessName)}` : ''}`;
+  const subject = `Te quedan pocos créditos${p.businessName ? ` — ${plain(p.businessName)}` : ''}`;
 
   const html = `<!doctype html>
 <html lang="es">
@@ -69,4 +69,9 @@ function escapeHtml(str = '') {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+/** Texto de asunto: los asuntos no son HTML (sin &amp;), y en una sola línea. */
+function plain(str = '') {
+  return String(str).replace(/\s+/g, ' ').trim();
 }

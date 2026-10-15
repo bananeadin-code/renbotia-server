@@ -16,6 +16,7 @@ import { Invitation } from '../models/Invitation.js';
 import { LearningSuggestion } from '../models/LearningSuggestion.js';
 import { ManagedRecord } from '../models/ManagedRecord.js';
 import { ManagementConfig } from '../models/ManagementConfig.js';
+import { OwnerMessage } from '../models/OwnerMessage.js';
 import { Payment } from '../models/Payment.js';
 import { PhoneVerification } from '../models/PhoneVerification.js';
 import { Subscription } from '../models/Subscription.js';
@@ -47,6 +48,7 @@ const BUSINESS_OWNED_MODELS = [
   ManagedRecord, // citas, pedidos, prospectos
   ManagementConfig,
   Membership, // membresías de ese negocio (incluye a otros colaboradores)
+  OwnerMessage, // charla del dueño con su asistente por WhatsApp
   Payment,
   PhoneVerification,
   Subscription,

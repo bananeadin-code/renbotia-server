@@ -57,6 +57,19 @@ export async function emailBackup({ reason = 'programado' } = {}) {
   const to = process.env.BACKUP_EMAIL;
   if (!to) throw new Error('Define BACKUP_EMAIL para recibir el respaldo.');
   const started = Date.now();
+  // El respaldo se arma en memoria: con una base grande podría agotar la RAM del
+  // servidor y tirarlo. Antes de cargar nada se mide y, si es mucha, solo se avisa.
+  const maxMb = Number(process.env.BACKUP_MAX_DATA_MB) || 150;
+  const { dataSize = 0 } = await mongoose.connection.db.stats().catch(() => ({}));
+  if (dataSize > maxMb * 1024 * 1024) {
+    await sendEmail({
+      to,
+      subject: `Respaldo RenBotIA omitido: la base ya pesa ${fmtMB(dataSize)}`,
+      html: `<p>El respaldo ${reason} por correo se omitió porque la base pesa <strong>${fmtMB(dataSize)}</strong> (límite seguro: ${maxMb} MB). Armarlo en memoria podría tirar el servidor.</p>
+        <p><strong>Siguiente paso:</strong> activa los respaldos automáticos de MongoDB Atlas (plan Flex o superior) y desactiva este con <code>BACKUP_EVERY_DAYS</code> alto o quitando <code>BACKUP_EMAIL</code>.</p>`,
+    });
+    throw new Error(`Respaldo omitido: la base pesa ${fmtMB(dataSize)} (> ${maxMb} MB).`);
+  }
   const { file, counts, fileBytes } = await createBackup();
   const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '').replace(/(\d{8})(\d{4})/, '$1-$2');
   const filename = `renbotia-${stamp}.rbk`;

@@ -1,3 +1,4 @@
+import { fetchWithTimeout } from '../utils/http.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 import { receiptEmail } from '../emails/receipt.js';
@@ -38,7 +39,7 @@ export async function sendEmail({ to, subject, html, replyTo, attachments }) {
   const replyToAddr = replyTo || env.resend.replyTo;
 
   try {
-    const res = await fetch(RESEND_ENDPOINT, {
+    const res = await fetchWithTimeout(RESEND_ENDPOINT, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${env.resend.apiKey}`,

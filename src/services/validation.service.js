@@ -17,7 +17,7 @@ import { logger } from '../utils/logger.js';
 let client = null;
 function getClient() {
   if (!env.anthropic.apiKey) return null; // sin key → capa semántica desactivada
-  if (!client) client = new Anthropic({ apiKey: env.anthropic.apiKey });
+  if (!client) client = new Anthropic({ apiKey: env.anthropic.apiKey, timeout: 30000, maxRetries: 1 });
   return client;
 }
 

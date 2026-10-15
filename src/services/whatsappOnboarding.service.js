@@ -1,3 +1,4 @@
+import { fetchWithTimeout } from '../utils/http.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 
@@ -24,7 +25,7 @@ export async function exchangeCode(code) {
   url.searchParams.set('code', code);
 
   try {
-    const res = await fetch(url, { method: 'GET' });
+    const res = await fetchWithTimeout(url, { method: 'GET' });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.access_token) {
       logger.error(`WhatsApp Embedded: fallo al canjear code (${res.status}): ${JSON.stringify(data?.error || data)}`);
@@ -40,7 +41,7 @@ export async function exchangeCode(code) {
 /** Suscribe NUESTRA app a la WABA del cliente (para recibir sus webhooks). */
 export async function subscribeApp(wabaId, token) {
   try {
-    const res = await fetch(`${GRAPH}/${env.whatsapp.apiVersion}/${wabaId}/subscribed_apps`, {
+    const res = await fetchWithTimeout(`${GRAPH}/${env.whatsapp.apiVersion}/${wabaId}/subscribed_apps`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -63,7 +64,7 @@ export async function subscribeApp(wabaId, token) {
  */
 export async function registerPhone(phoneNumberId, token, pin) {
   try {
-    const res = await fetch(`${GRAPH}/${env.whatsapp.apiVersion}/${phoneNumberId}/register`, {
+    const res = await fetchWithTimeout(`${GRAPH}/${env.whatsapp.apiVersion}/${phoneNumberId}/register`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ messaging_product: 'whatsapp', pin }),
@@ -97,7 +98,7 @@ export async function resolveWabaAndPhone(userToken) {
   let wabaId = '';
   try {
     const url = `${GRAPH}/${version}/debug_token?input_token=${encodeURIComponent(userToken)}&access_token=${encodeURIComponent(appToken)}`;
-    const res = await fetch(url);
+    const res = await fetchWithTimeout(url);
     const data = await res.json().catch(() => ({}));
     const scopes = data?.data?.granular_scopes || [];
     const waScope =
@@ -113,7 +114,7 @@ export async function resolveWabaAndPhone(userToken) {
   // 2) Número(s) de esa WABA.
   try {
     const url = `${GRAPH}/${version}/${wabaId}/phone_numbers?access_token=${encodeURIComponent(userToken)}`;
-    const res = await fetch(url);
+    const res = await fetchWithTimeout(url);
     const data = await res.json().catch(() => ({}));
     const phoneNumberId = data?.data?.[0]?.id || '';
     if (!phoneNumberId) return { ok: false, error: 'no_phone', wabaId };

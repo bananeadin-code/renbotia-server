@@ -1,4 +1,6 @@
+import mongoose from 'mongoose';
 import { createApp } from './app.js';
+import { drain } from './utils/inflight.js';
 import { installProcessAlerts } from './services/alert.service.js';
 import { connectDB } from './config/db.js';
 import { env } from './config/env.js';
@@ -46,13 +48,25 @@ async function start() {
   // Renovación mensual con cobro a la tarjeta guardada (Pro/Elite).
   startRenewalScheduler();
 
-  // Apagado ordenado
-  const shutdown = (signal) => {
+  // Apagado ordenado (cada deploy en Render manda SIGTERM y espera ~30 s): deja
+  // de aceptar conexiones, termina las peticiones en curso y el trabajo de fondo
+  // (mensajes del webhook, cobros) y solo entonces sale. Así un cliente que
+  // escribe justo durante el deploy no se queda sin respuesta.
+  let closing = false;
+  const shutdown = async (signal) => {
+    if (closing) return;
+    closing = true;
     logger.warn(`Recibida señal ${signal}, cerrando servidor...`);
-    server.close(() => {
-      logger.info('Servidor cerrado');
-      process.exit(0);
-    });
+    const httpClosed = new Promise((resolve) => server.close(resolve));
+    server.closeIdleConnections?.();
+    const [left] = await Promise.all([
+      drain(25_000),
+      Promise.race([httpClosed, new Promise((r) => setTimeout(r, 25_000).unref())]),
+    ]);
+    if (left) logger.warn(`Apagado: ${left} tarea(s) de fondo no terminaron a tiempo.`);
+    await mongoose.disconnect().catch(() => {});
+    logger.info('Servidor cerrado');
+    process.exit(0);
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));

@@ -8,7 +8,10 @@
  */
 export function toCsv(rows, columns) {
   const esc = (v) => {
-    const s = v === null || v === undefined ? '' : String(v);
+    let s = v === null || v === undefined ? '' : String(v);
+    // Inyección de fórmulas: un cliente podría escribir "=HYPERLINK(...)" en el
+    // chat y Excel lo ejecutaría al abrir el archivo. Un apóstrofo lo vuelve texto.
+    if (typeof v === 'string' && /^[=+\-@\t\r]/.test(s)) s = `'${s}`;
     return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const head = columns.map((c) => esc(c.label)).join(',');

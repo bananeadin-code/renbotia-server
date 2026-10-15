@@ -1,3 +1,4 @@
+import { track } from '../utils/inflight.js';
 import { env } from '../config/env.js';
 import { isBlocked } from '../utils/blocklist.js';
 import { logger } from '../utils/logger.js';
@@ -97,8 +98,9 @@ export function receiveWebhook(req, res) {
 
   // 2) Responder YA para que Meta no reintente; procesar sin bloquear la respuesta.
   res.sendStatus(200);
-  processInbound(req.body).catch((err) =>
-    logger.error(`WhatsApp: error procesando webhook: ${err.message}`)
+  // track: en un deploy, el servidor espera a que termine antes de apagarse.
+  track(
+    processInbound(req.body).catch((err) => logger.error(`WhatsApp: error procesando webhook: ${err.message}`))
   );
 }
 

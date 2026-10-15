@@ -141,7 +141,7 @@ export const sendWhatsappCode = asyncHandler(async (req, res) => {
     throw new ApiError(429, 'Espera unos segundos antes de pedir otro código.');
   }
 
-  const code = String(Math.floor(100000 + Math.random() * 900000)); // 6 dígitos
+  const code = String(crypto.randomInt(100000, 1000000)); // 6 dígitos
   await PhoneVerification.findOneAndUpdate(
     { business: req.businessId },
     {

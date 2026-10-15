@@ -1,3 +1,4 @@
+import { track, isClosing } from '../utils/inflight.js';
 import { Subscription } from '../models/Subscription.js';
 import { alertOps } from './alert.service.js';
 import { Plan } from '../models/Plan.js';
@@ -423,7 +424,8 @@ export function startRenewalScheduler() {
   }
   const minutes = Math.max(5, Number(process.env.RENEWALS_INTERVAL_MIN) || 15);
   const tick = () =>
-    runRenewals()
+    !isClosing() &&
+    track(runRenewals())
       .then((r) => r.processed && logger.info(`Renovaciones: ${JSON.stringify(r)}`))
       .catch((err) => logger.warn(`Renovaciones: ${err.message}`));
   setTimeout(tick, 60 * 1000).unref?.(); // primera pasada al minuto de arrancar

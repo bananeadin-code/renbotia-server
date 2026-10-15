@@ -23,7 +23,7 @@ export function hotLeadEmail(p) {
 
   const greetName = p.customerName ? `Hola ${escapeHtml(p.customerName)},` : 'Hola,';
   const convUrl = `${env.publicUrl.replace(/\/$/, '')}/dashboard/conversaciones`;
-  const subject = `Tienes un lead caliente${p.businessName ? ` — ${escapeHtml(p.businessName)}` : ''}`;
+  const subject = `Tienes un lead caliente${p.businessName ? ` — ${plain(p.businessName)}` : ''}`;
 
   const reason = p.reason
     ? escapeHtml(p.reason)
@@ -78,4 +78,9 @@ function escapeHtml(str = '') {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+/** Texto de asunto: los asuntos no son HTML (sin &amp;), y en una sola línea. */
+function plain(str = '') {
+  return String(str).replace(/\s+/g, ' ').trim();
 }

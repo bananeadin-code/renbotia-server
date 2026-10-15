@@ -16,7 +16,7 @@ export const PLANS = [
       'Datos del negocio: horario, ubicación y servicios',
       'Tono neutral',
       'Bandeja de Conversaciones (bot y manual)',
-      'Un canal conectado a la vez (WhatsApp, Instagram o Messenger)',
+      'Un canal conectado a la vez: {channels_or}',
     ],
   },
   {
@@ -34,7 +34,7 @@ export const PLANS = [
       'Chat del bot para tu sitio web',
       'Seguimiento automático a clientes que dejan de responder (también después de 24 h con plantilla)',
       'Simulador y bandeja de Conversaciones',
-      'Multicanal: WhatsApp, Messenger, Instagram y tu sitio a la vez',
+      'Multicanal: {channels} y tu sitio a la vez',
     ],
   },
   {
@@ -53,10 +53,29 @@ export const PLANS = [
       'Documentos de contexto: sube tu catálogo o lista de precios',
       'Chat para tu sitio web y seguimiento automático',
       'Colaboradores y bandeja de Conversaciones',
-      'Multicanal: WhatsApp, Messenger, Instagram y tu sitio a la vez',
+      'Multicanal: {channels} y tu sitio a la vez',
     ],
   },
 ];
+
+/**
+ * Canales que de verdad se pueden conectar hoy. Los beneficios de PLANS usan
+ * {channels} / {channels_or} y se completan al servir la lista: así no se
+ * anuncia Messenger o Instagram antes de que Meta los apruebe (y aparecen solos
+ * al encender FACEBOOK_MESSENGER_ENABLED / FACEBOOK_INSTAGRAM_ENABLED).
+ */
+export function planHighlights(highlights = [], { messenger = false, instagram = false } = {}) {
+  const live = ['WhatsApp', messenger && 'Messenger', instagram && 'Instagram'].filter(Boolean);
+  const soon = [!messenger && 'Messenger', !instagram && 'Instagram'].filter(Boolean);
+  // ['A','B','C'] + 'o' → "A, B o C"
+  const list = (arr, conj) => (arr.length > 1 ? `${arr.slice(0, -1).join(', ')} ${conj} ${arr.at(-1)}` : arr[0]);
+  const soonNote = soon.length ? ` (${list(soon, 'e')}: muy pronto)` : '';
+  return highlights.map((h) => {
+    if (h.includes('{channels_or}')) return h.replace('{channels_or}', list(live, 'o')) + soonNote;
+    if (h.includes('{channels}')) return h.replace('{channels}', live.join(', ')) + soonNote;
+    return h;
+  });
+}
 
 /**
  * Permisos de los colaboradores (el dueño siempre los tiene todos). Por defecto

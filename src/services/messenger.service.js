@@ -1,3 +1,4 @@
+import { fetchWithTimeout } from '../utils/http.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 import { splitMessage } from '../utils/splitMessage.js';
@@ -42,7 +43,7 @@ export async function sendMessengerText({ pageToken, recipientId, text }) {
  */
 export async function postPageMessage(pageToken, body, label = 'Messenger') {
   try {
-    const res = await fetch(`${GRAPH()}/me/messages?access_token=${encodeURIComponent(pageToken)}`, {
+    const res = await fetchWithTimeout(`${GRAPH()}/me/messages?access_token=${encodeURIComponent(pageToken)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -99,7 +100,7 @@ export async function sendMessengerImage({ pageToken, recipientId, image }) {
   }
 
   try {
-    const res = await fetch(url, init);
+    const res = await fetchWithTimeout(url, init);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       logger.warn(`Messenger: envío de imagen ${res.status}: ${JSON.stringify(data).slice(0, 300)}`);
@@ -118,7 +119,7 @@ export async function sendMessengerImage({ pageToken, recipientId, image }) {
 export async function getMessengerProfileName(psid, pageToken) {
   if (!psid || !pageToken) return '';
   try {
-    const res = await fetch(
+    const res = await fetchWithTimeout(
       `${GRAPH()}/${psid}?fields=first_name,last_name&access_token=${encodeURIComponent(pageToken)}`
     );
     const data = await res.json().catch(() => ({}));
@@ -138,7 +139,7 @@ export async function getMessengerProfileName(psid, pageToken) {
 export async function downloadMetaFile(url, maxBytes = 5 * 1024 * 1024) {
   if (!url) return { ok: false };
   try {
-    const res = await fetch(url);
+    const res = await fetchWithTimeout(url);
     if (!res.ok) return { ok: false };
     const mime = (res.headers.get('content-type') || '').split(';')[0].trim();
     const buf = Buffer.from(await res.arrayBuffer());
@@ -157,7 +158,7 @@ export async function downloadMetaFile(url, maxBytes = 5 * 1024 * 1024) {
 export async function downloadMessengerImage(url) {
   if (!url) return { ok: false };
   try {
-    const res = await fetch(url);
+    const res = await fetchWithTimeout(url);
     if (!res.ok) return { ok: false };
     const mime = (res.headers.get('content-type') || '').split(';')[0].trim();
     const buf = Buffer.from(await res.arrayBuffer());
@@ -178,7 +179,7 @@ export async function downloadMessengerImage(url) {
 export async function verifyUserToken(userToken) {
   try {
     const appToken = `${env.whatsapp.appId}|${env.whatsapp.appSecret}`;
-    const res = await fetch(
+    const res = await fetchWithTimeout(
       `${GRAPH()}/debug_token?input_token=${encodeURIComponent(userToken)}&access_token=${encodeURIComponent(appToken)}`
     );
     const body = await res.json().catch(() => ({}));
@@ -207,7 +208,7 @@ export async function toLongLivedUserToken(userToken) {
     url.searchParams.set('client_id', env.whatsapp.appId);
     url.searchParams.set('client_secret', env.whatsapp.appSecret);
     url.searchParams.set('fb_exchange_token', userToken);
-    const res = await fetch(url);
+    const res = await fetchWithTimeout(url);
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.access_token) return userToken;
     return data.access_token;
@@ -222,7 +223,7 @@ export async function toLongLivedUserToken(userToken) {
  */
 export async function listUserPages(userToken) {
   try {
-    const res = await fetch(
+    const res = await fetchWithTimeout(
       `${GRAPH()}/me/accounts?fields=id,name,access_token&limit=50&access_token=${encodeURIComponent(userToken)}`
     );
     const data = await res.json().catch(() => ({}));
@@ -243,7 +244,7 @@ export async function listUserPages(userToken) {
  */
 export async function getPageInfo(pageId, pageToken) {
   try {
-    const res = await fetch(
+    const res = await fetchWithTimeout(
       `${GRAPH()}/${pageId}?fields=name&access_token=${encodeURIComponent(pageToken)}`
     );
     const data = await res.json().catch(() => ({}));
@@ -260,7 +261,7 @@ export async function getPageInfo(pageId, pageToken) {
  */
 export async function subscribePageToApp(pageId, pageToken, fields = 'messages,messaging_postbacks') {
   try {
-    const res = await fetch(`${GRAPH()}/${pageId}/subscribed_apps?access_token=${encodeURIComponent(pageToken)}`, {
+    const res = await fetchWithTimeout(`${GRAPH()}/${pageId}/subscribed_apps?access_token=${encodeURIComponent(pageToken)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ subscribed_fields: fields }),
@@ -282,7 +283,7 @@ export async function subscribePageToApp(pageId, pageToken, fields = 'messages,m
  */
 export async function pageHasApp(pageId, pageToken) {
   try {
-    const res = await fetch(`${GRAPH()}/${pageId}/subscribed_apps?access_token=${encodeURIComponent(pageToken)}`);
+    const res = await fetchWithTimeout(`${GRAPH()}/${pageId}/subscribed_apps?access_token=${encodeURIComponent(pageToken)}`);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return false;
     const appId = env.whatsapp.appId;
@@ -321,7 +322,7 @@ export async function syncMessengerProfile({ pageToken, platform = 'messenger', 
   }
 
   const call = async (method, body) => {
-    const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const res = await fetchWithTimeout(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       logger.warn(`${platform}: messenger_profile ${method} ${res.status}: ${JSON.stringify(data).slice(0, 300)}`);

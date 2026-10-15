@@ -1,3 +1,4 @@
+import { fetchWithTimeout } from '../utils/http.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 import { splitMessage } from '../utils/splitMessage.js';
@@ -58,7 +59,7 @@ export async function sendInstagramImage({ pageToken, recipientId, image }) {
 export async function getInstagramProfileName(igsid, pageToken) {
   if (!igsid || !pageToken) return '';
   try {
-    const res = await fetch(`${GRAPH()}/${igsid}?fields=name,username&access_token=${encodeURIComponent(pageToken)}`);
+    const res = await fetchWithTimeout(`${GRAPH()}/${igsid}?fields=name,username&access_token=${encodeURIComponent(pageToken)}`);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return '';
     return (data.name || (data.username ? `@${data.username}` : '')).trim();
@@ -75,7 +76,7 @@ export async function getInstagramProfileName(igsid, pageToken) {
 export async function listInstagramAccounts(userToken) {
   try {
     const fields = 'id,name,access_token,instagram_business_account{id,username,profile_picture_url}';
-    const res = await fetch(
+    const res = await fetchWithTimeout(
       `${GRAPH()}/me/accounts?fields=${encodeURIComponent(fields)}&limit=50&access_token=${encodeURIComponent(userToken)}`
     );
     const data = await res.json().catch(() => ({}));

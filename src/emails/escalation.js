@@ -22,7 +22,7 @@ export function escalationEmail(p) {
 
   const greetName = p.customerName ? `Hola ${escapeHtml(p.customerName)},` : 'Hola,';
   const convUrl = `${env.publicUrl.replace(/\/$/, '')}/dashboard/conversaciones`;
-  const subject = `Una conversación necesita tu atención${p.businessName ? ` — ${escapeHtml(p.businessName)}` : ''}`;
+  const subject = `Una conversación necesita tu atención${p.businessName ? ` — ${plain(p.businessName)}` : ''}`;
 
   const reason = p.reason ? escapeHtml(p.reason) : 'El bot pidió que una persona atienda esta conversación.';
   const who = p.contactName ? escapeHtml(p.contactName) : 'Un cliente';
@@ -75,4 +75,9 @@ function escapeHtml(str = '') {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+/** Texto de asunto: los asuntos no son HTML (sin &amp;), y en una sola línea. */
+function plain(str = '') {
+  return String(str).replace(/\s+/g, ' ').trim();
 }

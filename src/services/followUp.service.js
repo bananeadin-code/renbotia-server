@@ -1,3 +1,4 @@
+import { track, isClosing } from '../utils/inflight.js';
 import { BotConfig } from '../models/BotConfig.js';
 import { Business } from '../models/Business.js';
 import { Subscription } from '../models/Subscription.js';
@@ -117,7 +118,10 @@ async function runTemplateFollowUps({ config, business, planKey }) {
     updatedAt: { $gte: new Date(now - TEMPLATE_MAX_SILENCE_MS - 24 * HOUR), $lte: new Date(now - WINDOW_MS) },
   })
     .sort({ updatedAt: 1 })
-    .limit(100);
+    .limit(100)
+    // Solo lo reciente (sin el historial completo ni sus imágenes): aquí no se guarda el chat.
+    .select({ messages: { $slice: -20 } })
+    .lean();
   const due = candidates.filter((c) => isTemplateFollowUpDue(c, delayMs, now));
   if (!due.length) return 0;
   // Fuera del horario en que el bot atiende (o canal en pausa) no se escribe solo.
@@ -233,7 +237,10 @@ async function runForBusiness(config) {
     updatedAt: { $gte: new Date(now - WINDOW_MS), $lte: new Date(now - delayMs) },
   })
     .sort({ updatedAt: 1 })
-    .limit(100);
+    .limit(100)
+    // Solo lo reciente (sin el historial completo ni sus imágenes): aquí no se guarda el chat.
+    .select({ messages: { $slice: -20 } })
+    .lean();
 
   let sent = 0;
   for (const chat of candidates) {
@@ -327,7 +334,7 @@ export function startFollowUpScheduler() {
   }
   const minutes = Math.max(5, Number(process.env.FOLLOWUP_INTERVAL_MIN) || 10);
   const timer = setInterval(() => {
-    runFollowUps().catch((err) => logger.warn(`Seguimiento: ${err.message}`));
+    if (!isClosing()) track(runFollowUps().catch((err) => logger.warn(`Seguimiento: ${err.message}`)));
   }, minutes * 60 * 1000);
   timer.unref?.();
   logger.info(`Seguimiento automático: revisión cada ${minutes} min.`);

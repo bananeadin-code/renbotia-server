@@ -1,3 +1,4 @@
+import { track, isClosing } from '../utils/inflight.js';
 import { ManagementConfig } from '../models/ManagementConfig.js';
 import { ManagedRecord } from '../models/ManagedRecord.js';
 import { Business } from '../models/Business.js';
@@ -276,7 +277,7 @@ export function startReminderScheduler() {
     return;
   }
   const timer = setInterval(() => {
-    runReminders().catch((err) => logger.warn(`Recordatorios: ${err.message}`));
+    if (!isClosing()) track(runReminders().catch((err) => logger.warn(`Recordatorios: ${err.message}`)));
   }, 10 * 60 * 1000);
   timer.unref?.();
   logger.info('Recordatorios de citas: revisión cada 10 min.');

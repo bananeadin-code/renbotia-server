@@ -38,7 +38,7 @@ export function receiptEmail(p) {
 
   const subject = p.auto
     ? `Recarga automática confirmada — ${money}`
-    : `Comprobante de compra — ${escapeHtml(p.description)}`;
+    : `Comprobante de compra — ${plain(p.description)}`;
 
   const row = (label, value) => `
     <tr>
@@ -134,4 +134,9 @@ function escapeHtml(str = '') {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+/** Texto de asunto: los asuntos no son HTML (sin &amp;), y en una sola línea. */
+function plain(str = '') {
+  return String(str).replace(/\s+/g, ' ').trim();
 }

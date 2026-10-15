@@ -1,3 +1,4 @@
+import { fetchWithTimeout } from '../utils/http.js';
 import crypto from 'crypto';
 import { summarizeTemplate, templateVars } from '../utils/waTemplate.js';
 import { env, isProd } from '../config/env.js';
@@ -34,7 +35,7 @@ export async function getPhoneNumberInfo(phoneNumberId) {
   if (!isConfigured() || !id) return { ok: false, error: 'not_configured' };
   const url = `${GRAPH}/${env.whatsapp.apiVersion}/${id}?fields=display_phone_number,verified_name`;
   try {
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${env.whatsapp.token}` } });
+    const res = await fetchWithTimeout(url, { headers: { Authorization: `Bearer ${env.whatsapp.token}` } });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       logger.warn(`WhatsApp: no se pudo leer el número (${res.status}): ${JSON.stringify(data?.error || data)}`);
@@ -56,7 +57,7 @@ export async function getPhoneNumberInfo(phoneNumberId) {
 export async function downloadMedia(mediaId) {
   if (!isConfigured() || !mediaId) return { ok: false, error: 'not_configured' };
   try {
-    const metaRes = await fetch(`${GRAPH}/${env.whatsapp.apiVersion}/${mediaId}`, {
+    const metaRes = await fetchWithTimeout(`${GRAPH}/${env.whatsapp.apiVersion}/${mediaId}`, {
       headers: { Authorization: `Bearer ${env.whatsapp.token}` },
     });
     const meta = await metaRes.json().catch(() => ({}));
@@ -64,7 +65,7 @@ export async function downloadMedia(mediaId) {
       logger.error(`WhatsApp: fallo al leer media (${metaRes.status}): ${JSON.stringify(meta?.error || meta)}`);
       return { ok: false, error: meta?.error?.message || `HTTP ${metaRes.status}` };
     }
-    const binRes = await fetch(meta.url, { headers: { Authorization: `Bearer ${env.whatsapp.token}` } });
+    const binRes = await fetchWithTimeout(meta.url, { headers: { Authorization: `Bearer ${env.whatsapp.token}` } });
     if (!binRes.ok) return { ok: false, error: `HTTP ${binRes.status}` };
     const buf = Buffer.from(await binRes.arrayBuffer());
     if (buf.length > 5 * 1024 * 1024) return { ok: false, error: 'archivo muy grande' };
@@ -137,7 +138,7 @@ export async function sendText({ phoneNumberId, to, text }) {
   };
 
   try {
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${env.whatsapp.token}`,
@@ -212,7 +213,7 @@ export async function sendTemplate({ phoneNumberId, to, templateName, languageCo
   };
 
   try {
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       method: 'POST',
       headers: { Authorization: `Bearer ${env.whatsapp.token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -239,7 +240,7 @@ export async function listTemplates(wabaId) {
   if (!isConfigured() || !wabaId) return { ok: false, error: 'not_configured', templates: [] };
   const url = `${GRAPH}/${env.whatsapp.apiVersion}/${wabaId}/message_templates?fields=name,status,language,category,components,parameter_format&limit=100`;
   try {
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${env.whatsapp.token}` } });
+    const res = await fetchWithTimeout(url, { headers: { Authorization: `Bearer ${env.whatsapp.token}` } });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       logger.error(`WhatsApp: fallo al listar plantillas (${res.status}): ${JSON.stringify(data?.error || data)}`);
@@ -265,7 +266,7 @@ export async function getBusinessProfile(phoneNumberId) {
   const fields = 'about,address,description,email,profile_picture_url,websites,vertical';
   const url = `${GRAPH}/${env.whatsapp.apiVersion}/${id}/whatsapp_business_profile?fields=${fields}`;
   try {
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${env.whatsapp.token}` } });
+    const res = await fetchWithTimeout(url, { headers: { Authorization: `Bearer ${env.whatsapp.token}` } });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       logger.error(`WhatsApp: fallo al leer perfil (${res.status}): ${JSON.stringify(data?.error || data)}`);
@@ -289,7 +290,7 @@ export async function updateBusinessProfile(phoneNumberId, fields) {
   const url = `${GRAPH}/${env.whatsapp.apiVersion}/${id}/whatsapp_business_profile`;
   const body = { messaging_product: 'whatsapp', ...fields };
   try {
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       method: 'POST',
       headers: { Authorization: `Bearer ${env.whatsapp.token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -328,7 +329,7 @@ export async function setBusinessProfilePhoto(phoneNumberId, dataUri) {
   try {
     // 1) Abrir la sesión de subida (a nivel de app).
     const startUrl = `${GRAPH}/${version}/${env.whatsapp.appId}/uploads?file_length=${buffer.length}&file_type=${encodeURIComponent(mime)}`;
-    const startRes = await fetch(startUrl, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+    const startRes = await fetchWithTimeout(startUrl, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
     const startData = await startRes.json().catch(() => ({}));
     if (!startRes.ok || !startData.id) {
       logger.error(`WhatsApp: fallo al iniciar subida de foto (${startRes.status}): ${JSON.stringify(startData?.error || startData)}`);
@@ -336,7 +337,7 @@ export async function setBusinessProfilePhoto(phoneNumberId, dataUri) {
     }
 
     // 2) Subir los bytes → devuelve el handle `h`.
-    const upRes = await fetch(`${GRAPH}/${version}/${startData.id}`, {
+    const upRes = await fetchWithTimeout(`${GRAPH}/${version}/${startData.id}`, {
       method: 'POST',
       headers: { Authorization: `OAuth ${token}`, file_offset: '0', 'Content-Type': mime },
       body: buffer,
@@ -348,7 +349,7 @@ export async function setBusinessProfilePhoto(phoneNumberId, dataUri) {
     }
 
     // 3) Asignar la foto al perfil.
-    const setRes = await fetch(`${GRAPH}/${version}/${id}/whatsapp_business_profile`, {
+    const setRes = await fetchWithTimeout(`${GRAPH}/${version}/${id}/whatsapp_business_profile`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ messaging_product: 'whatsapp', profile_picture_handle: upData.h }),
@@ -390,7 +391,7 @@ export async function createTemplate(wabaId, { name, category, language = 'es_MX
   if (quick.length) components.push({ type: 'BUTTONS', buttons: quick.map((text) => ({ type: 'QUICK_REPLY', text: text.slice(0, 25) })) });
   const body = { name, category, language, components, ...(named ? { parameter_format: 'NAMED' } : {}) };
   try {
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       method: 'POST',
       headers: { Authorization: `Bearer ${env.whatsapp.token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -433,7 +434,7 @@ async function uploadMedia(phoneNumberId, dataUri) {
   const url = `${GRAPH}/${env.whatsapp.apiVersion}/${phoneNumberId}/media`;
   try {
     // Sin 'Content-Type' manual: fetch pone el boundary del multipart.
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       method: 'POST',
       headers: { Authorization: `Bearer ${env.whatsapp.token}` },
       body: form,
@@ -490,7 +491,7 @@ export async function sendImage({ phoneNumberId, to, image, caption }) {
     image: media,
   };
   try {
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       method: 'POST',
       headers: { Authorization: `Bearer ${env.whatsapp.token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),

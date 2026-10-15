@@ -1,3 +1,4 @@
+import { track, isClosing } from '../utils/inflight.js';
 import { PLANS, CREDIT_PACKS } from '../config/constants.js';
 import { Business } from '../models/Business.js';
 import { Subscription } from '../models/Subscription.js';
@@ -227,7 +228,8 @@ export async function reconcilePayments({ now = Date.now(), windowMs = RECONCILE
 
 export function startPaymentReconciler() {
   if (process.env.RECONCILE_ENABLED === 'false') return;
-  const run = (opts) => reconcilePayments(opts).catch((err) => logger.warn(`Conciliación: ${err.message}`));
+  const run = (opts) =>
+    !isClosing() && track(reconcilePayments(opts).catch((err) => logger.warn(`Conciliación: ${err.message}`)));
   // Al arrancar revisa 30 días (cubre cualquier compra anterior a este arreglo).
   setTimeout(() => run({ windowMs: 30 * 24 * 60 * 60 * 1000 }), 60 * 1000).unref?.();
   const timer = setInterval(() => run(), 10 * 60 * 1000);

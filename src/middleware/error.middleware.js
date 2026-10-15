@@ -37,7 +37,7 @@ export function errorHandler(err, req, res, next) {
   // CastError (ObjectId inválido)
   if (err.name === 'CastError') {
     statusCode = 400;
-    message = `Identificador inválido: ${err.value}`;
+    message = 'Identificador inválido';
   }
 
   // Errores de JWT
@@ -58,6 +58,13 @@ export function errorHandler(err, req, res, next) {
       message: `${req.method} ${req.baseUrl || ''}${req.route?.path || req.path} → ${err.message}`,
       detail: err.stack,
     });
+    // Un bug no debe mostrarle al cliente el mensaje técnico (rutas internas,
+    // errores de Mongo o de librerías). Los ApiError 5xx sí traen texto pensado
+    // para el usuario ("No se pudo completar la conexión con Meta…").
+    if (isProd && !err.isOperational) {
+      message = 'Ocurrió un error inesperado. Intenta de nuevo en un momento; si continúa, escríbenos a servicios@renbotia.com.';
+      details = null;
+    }
   } else {
     logger.warn(`${req.method} ${req.originalUrl} → ${statusCode} ${message}`);
   }

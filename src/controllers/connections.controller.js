@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { z } from 'zod';
 import { qualifyReferral } from '../services/referral.service.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
@@ -763,5 +764,5 @@ export const createWhatsappTemplate = asyncHandler(async (req, res) => {
 
 /** PIN de verificación en dos pasos (6 dígitos) para registrar el número. */
 function generatePin() {
-  return String(Math.floor(100000 + Math.random() * 900000));
+  return String(crypto.randomInt(100000, 1000000));
 }
