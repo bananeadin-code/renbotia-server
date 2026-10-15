@@ -12,7 +12,7 @@ import { logAudit } from '../services/audit.service.js';
 import { env, isProd } from '../config/env.js';
 
 export const updateBusinessSchema = z.object({
-  name: z.string().min(2).optional(),
+  name: z.string().trim().min(2).max(80).optional(),
   industry: z.enum(['legal', 'contable', 'consultoria', 'agencia', 'otro']).optional(),
   industryOther: z.string().max(60).optional(),
   whatsappNumber: z.string().max(30).optional(),

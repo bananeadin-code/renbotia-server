@@ -18,15 +18,16 @@ import { describeDevice } from '../utils/userAgent.js';
  * Esquemas de validación (Zod). Se exportan para usarse en las rutas.
  */
 export const registerSchema = z.object({
-  name: z.string().min(2, 'El nombre debe tener al menos 2 caracteres'),
-  email: z.string().email('Email inválido'),
-  password: z.string().min(8, 'La contraseña debe tener al menos 8 caracteres'),
+  name: z.string().trim().min(2, 'El nombre debe tener al menos 2 caracteres').max(80, 'El nombre es demasiado largo'),
+  email: z.string().email('Email inválido').max(254),
+  // bcrypt solo usa los primeros 72 bytes: más largo no aporta y se acota.
+  password: z.string().min(8, 'La contraseña debe tener al menos 8 caracteres').max(72, 'Usa una contraseña de máximo 72 caracteres'),
   ref: z.string().max(16).optional(), // código de referido (enlace de invitación)
 });
 
 export const loginSchema = z.object({
   email: z.string().email('Email inválido'),
-  password: z.string().min(1, 'La contraseña es obligatoria'),
+  password: z.string().min(1, 'La contraseña es obligatoria').max(200),
 });
 
 export const forgotSchema = z.object({
@@ -34,8 +35,8 @@ export const forgotSchema = z.object({
 });
 
 export const resetSchema = z.object({
-  token: z.string().min(10, 'Token inválido'),
-  password: z.string().min(8, 'La contraseña debe tener al menos 8 caracteres'),
+  token: z.string().min(10, 'Token inválido').max(500),
+  password: z.string().min(8, 'La contraseña debe tener al menos 8 caracteres').max(72, 'Usa una contraseña de máximo 72 caracteres'),
 });
 
 export const verifyEmailSchema = z.object({
