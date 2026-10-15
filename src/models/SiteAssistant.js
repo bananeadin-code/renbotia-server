@@ -66,7 +66,7 @@ const siteAssistantSchema = new mongoose.Schema(
         {
           question: '¿Se conecta a WhatsApp real?',
           answer:
-            'La conexión con WhatsApp Business (Cloud API) está en marcha. Mientras tanto, puedes entrenar y probar tu bot en el simulador incluido.',
+            'Sí. Conectas tu propio número de WhatsApp Business desde Conexiones con el proceso oficial de Meta (toma unos minutos) y el bot responde a tus clientes reales. También puedes probarlo antes en el simulador.',
         },
       ],
     },

@@ -75,7 +75,8 @@ export const siteAssistantMessage = asyncHandler(async (req, res) => {
   }
 
   const { message, history } = req.body;
-  const system = buildSystemPrompt(toBotConfig(cfg), SITE_BUSINESS);
+  // Voz de marca de RenBotIA: sin emojis (los bots de los clientes usan su propio tono).
+  const system = `${buildSystemPrompt(toBotConfig(cfg), SITE_BUSINESS)}\n- No uses emojis.`;
   const messages = [...history.slice(-8), { role: 'user', content: message }];
 
   try {
