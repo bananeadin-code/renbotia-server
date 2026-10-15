@@ -1,3 +1,4 @@
+import { formatForChannel } from '../utils/chatFormat.js';
 import { z } from 'zod';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { SiteAssistant } from '../models/SiteAssistant.js';
@@ -80,7 +81,7 @@ export const siteAssistantMessage = asyncHandler(async (req, res) => {
   try {
     // Asistente del sitio (preguntas sobre RenBotIA): Haiku basta y cuesta mucho menos.
     const { text } = await generateReply({ system, messages, model: MODEL_BY_PLAN.free });
-    res.json({ success: true, data: { reply: text } });
+    res.json({ success: true, data: { reply: formatForChannel(text, 'site') } });
   } catch (err) {
     if (err.statusCode === 503) throw err; // problema de configuración (API key): que lo vea el admin
     logger.warn(`Asistente del sitio: IA no disponible; se degrada. ${err.message}`);

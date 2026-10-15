@@ -1,3 +1,4 @@
+import { formatForChannel } from '../utils/chatFormat.js';
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import { asyncHandler } from '../utils/asyncHandler.js';
@@ -89,7 +90,8 @@ export const demoMessage = asyncHandler(async (req, res) => {
   try {
     // La demo con el negocio del visitante corre en Haiku (barato y rápido).
     const { text } = await generateReply({ system, messages, model: profile ? MODEL_BY_PLAN.free : undefined });
-    res.json({ success: true, data: { reply: text } });
+    // La demo imita un chat de WhatsApp.
+    res.json({ success: true, data: { reply: formatForChannel(text, 'whatsapp') } });
   } catch (err) {
     // Degradación con gracia también aquí: nunca romper la demo con un error feo.
     logger.warn(`Demo: IA no disponible (${err.statusCode || 'sin status'}). ${err.message}`);

@@ -1,3 +1,4 @@
+import { formatForChannel } from '../utils/chatFormat.js';
 import crypto from 'node:crypto';
 import { Business } from '../models/Business.js';
 import { BotConfig } from '../models/BotConfig.js';
@@ -836,7 +837,7 @@ export async function handleOwnerMessage({ business: base, waId, msg, phoneNumbe
     source: 'owner',
   });
 
-  await say(business, phoneNumberId, waId, composeReply(result.text, ctx).slice(0, 3500));
+  await say(business, phoneNumberId, waId, formatForChannel(composeReply(result.text, ctx), 'whatsapp').slice(0, 3500));
   return true;
 }
 

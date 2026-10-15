@@ -1,3 +1,4 @@
+import { formatForChannel } from '../utils/chatFormat.js';
 import { track, isClosing } from '../utils/inflight.js';
 import { BotConfig } from '../models/BotConfig.js';
 import { Business } from '../models/Business.js';
@@ -193,7 +194,7 @@ async function composeFollowUp({ config, business, chat, planKey }) {
   const messages = [...history, { role: 'user', content: '(El cliente no ha respondido desde tu último mensaje.)' }];
   const model = MODEL_BY_PLAN[planKey] || env.anthropic.model;
   const r = await generateReply({ system, messages, model });
-  const text = (r.text || '').trim();
+  const text = formatForChannel((r.text || '').trim(), chat.channel);
   if (!text || /^SKIP\b/i.test(text) || text === '(sin respuesta)') return { text: null, usage: { ...r, model } };
   return { text, usage: { ...r, model } };
 }

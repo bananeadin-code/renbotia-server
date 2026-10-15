@@ -1,3 +1,4 @@
+import { formatForChannel } from '../utils/chatFormat.js';
 import { Subscription } from '../models/Subscription.js';
 import { CUSTOMER_DAILY_CAP, customerMessagesToday } from '../utils/blocklist.js';
 
@@ -359,6 +360,9 @@ export async function processMessage({
       sentImages: [],
     };
   }
+
+  // Formato del canal (la IA escribe en markdown; WhatsApp usa *negrita* y el resto texto plano).
+  text = formatForChannel(text, channel);
 
   // 7) Descontar a la billetera los tokens FACTURABLES (con el caché abaratado);
   //    el consumo real (totalTokens) se guarda en UsageLog para el costo.
