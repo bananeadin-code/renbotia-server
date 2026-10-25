@@ -28,13 +28,13 @@ const daySchema = z.object({
 
 export const updateConfigSchema = z.object({
   enabled: z.boolean().optional(),
-  enabledTypes: z.array(z.enum(RECORD_TYPES)).optional(),
+  enabledTypes: z.array(z.enum(RECORD_TYPES)).max(RECORD_TYPES.length).optional(),
   slotMinutes: z.number().int().min(5).max(480).optional(),
   capacityPerSlot: z.number().int().min(1).max(100).optional(),
   leadTimeHours: z.number().int().min(0).max(168).optional(),
   horizonDays: z.number().int().min(1).max(365).optional(),
   schedule: z.array(daySchema).length(7).optional(),
-  blackoutDates: z.array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).optional(),
+  blackoutDates: z.array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).max(366).optional(),
   instructions: z.string().max(2000).optional(),
   reminders: z
     .object({
@@ -68,6 +68,11 @@ const customerSchema = z.object({
   contact: z.string().max(120).optional(),
 });
 
+// Datos libres del registro (los llena el bot o el equipo): acotados en tamaño.
+const detailsSchema = z
+  .record(z.any())
+  .refine((d) => Object.keys(d).length <= 30 && JSON.stringify(d).length <= 5000, 'Los detalles son demasiado largos.');
+
 export const createRecordSchema = z.object({
   type: z.enum(RECORD_TYPES),
   status: z.enum(RECORD_STATUSES).optional(),
@@ -76,7 +81,7 @@ export const createRecordSchema = z.object({
   quantity: z.number().int().min(1).max(1000).optional(),
   summary: z.string().max(200).optional(),
   notes: z.string().max(2000).optional(),
-  details: z.record(z.any()).optional(),
+  details: detailsSchema.optional(),
   force: z.boolean().optional(),
 });
 
@@ -87,7 +92,7 @@ export const updateRecordSchema = z.object({
   quantity: z.number().int().min(1).max(1000).optional(),
   summary: z.string().max(200).optional(),
   notes: z.string().max(2000).optional(),
-  details: z.record(z.any()).optional(),
+  details: detailsSchema.optional(),
 });
 
 export const listRecordsHandler = asyncHandler(async (req, res) => {

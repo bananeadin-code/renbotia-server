@@ -35,12 +35,12 @@ export const updateBotConfigSchema = z.object({
   botName: z.string().min(1).max(60).optional(),
   tone: z.enum(['formal', 'cercano', 'neutral', 'tecnico']).optional(),
   systemPrompt: z.string().max(4000).optional(),
-  faqs: z.array(faqSchema).optional(),
+  faqs: z.array(faqSchema).max(200).optional(), // tope de seguridad (el plan fija el real)
   businessInfo: z
     .object({
       hours: z.string().max(200).optional(),
       location: z.string().max(200).optional(),
-      services: z.array(z.string().max(120)).optional(),
+      services: z.array(z.string().max(120)).max(50).optional(),
       basePricing: z.string().max(500).optional(),
     })
     .optional(),

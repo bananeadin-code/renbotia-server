@@ -32,7 +32,7 @@ export const onboardingSchema = z.object({
         .object({
           hours: z.string().max(200).optional(),
           location: z.string().max(200).optional(),
-          services: z.array(z.string().max(120)).optional(),
+          services: z.array(z.string().max(120)).max(50).optional(),
           basePricing: z.string().max(500).optional(),
         })
         .optional(),

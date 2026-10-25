@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import { createApp } from './app.js';
 import { drain } from './utils/inflight.js';
+import { checkNodeRuntime } from './utils/runtime.js';
 import { installProcessAlerts } from './services/alert.service.js';
 import { connectDB } from './config/db.js';
 import { env } from './config/env.js';
@@ -20,6 +21,7 @@ import { startPaymentReconciler } from './services/fulfillment.service.js';
  */
 async function start() {
   installProcessAlerts();
+  checkNodeRuntime(); // avisa si Node corre sin los parches de seguridad
   await connectDB();
 
   // Precios y beneficios de los planes = los del código (los que se cobran).

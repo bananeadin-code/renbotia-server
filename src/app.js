@@ -64,15 +64,19 @@ export function createApp() {
   // imágenes embebidas como data URI comprimido dentro del JSON.
   // Guardamos el body crudo para poder verificar la firma HMAC del webhook de
   // WhatsApp (Meta firma el payload con el App Secret sobre los bytes exactos).
+  // inflate:false → no se aceptan cuerpos comprimidos (nadie los usa: Meta y el
+  // panel mandan JSON plano). Cierra de raíz fallas de descompresión como
+  // GHSA-27r3-jxmh-p828 (bytes extra tras un gzip tumbaban el proceso).
   app.use(
     express.json({
       limit: '12mb',
+      inflate: false,
       verify: (req, _res, buf) => {
         req.rawBody = buf;
       },
     })
   );
-  app.use(express.urlencoded({ extended: true, limit: '12mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '12mb', inflate: false }));
   app.use(cookieParser());
 
   // Webhook de WhatsApp (Meta llama directo): fuera de /api y de su rate-limit.

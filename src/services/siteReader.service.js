@@ -1,5 +1,8 @@
 import dns from 'node:dns/promises';
+import http from 'node:http';
+import https from 'node:https';
 import net from 'node:net';
+import zlib from 'node:zlib';
 
 /**
  * Lee el texto de una página pública para la demo "Pruébalo con tu negocio".
@@ -93,6 +96,97 @@ export function htmlToText(html) {
 }
 
 /**
+ * Lookup de DNS que valida la IP AL CONECTAR (no solo antes): evita el "DNS
+ * rebinding", donde el dominio resuelve a una IP pública en la revisión y a una
+ * privada justo después.
+ */
+function publicLookup(hostname, options, callback) {
+  dns
+    .lookup(hostname, { all: true })
+    .then((addrs) => {
+      if (!addrs.length || addrs.some((a) => isPrivateIp(a.address))) {
+        return callback(Object.assign(new Error('Destino no permitido'), { code: 'BLOCKED' }));
+      }
+      if (options?.all) return callback(null, addrs);
+      return callback(null, addrs[0].address, addrs[0].family);
+    })
+    .catch((err) => callback(err));
+}
+
+/**
+ * GET con el cliente nativo (sin fetch): pide la página SIN compresión y solo
+ * acepta identity/gzip/deflate. Nunca se descomprime Brotli de un sitio ajeno
+ * (CVE-2026-111497: el decodificador Brotli de Node permitía ejecución remota).
+ * Devuelve el cuerpo ya acotado por tamaño y tiempo.
+ */
+export function getPage(url, lookup = publicLookup) {
+  return new Promise((resolve, reject) => {
+    // Con una IP literal Node no llama al lookup: se valida aquí también.
+    const host = url.hostname.replace(/^\[|\]$/g, '');
+    if (lookup === publicLookup && net.isIP(host) && isPrivateIp(host)) {
+      return reject(Object.assign(new Error('Destino no permitido'), { code: 'BLOCKED' }));
+    }
+    const client = url.protocol === 'https:' ? https : http;
+    const req = client.request(
+      url,
+      {
+        method: 'GET',
+        lookup,
+        headers: {
+          'User-Agent': 'RenBotIA-Demo/1.0 (+https://renbotia.com)',
+          Accept: 'text/html,*/*;q=0.5',
+          'Accept-Encoding': 'gzip, deflate, identity;q=0.5',
+        },
+      },
+      (res) => {
+        const status = res.statusCode || 0;
+        const headers = res.headers;
+        if (status >= 300 && status < 400) {
+          res.resume();
+          return resolve({ status, headers, body: Buffer.alloc(0) });
+        }
+        const enc = String(headers['content-encoding'] || 'identity').toLowerCase().trim();
+        let stream = res;
+        if (enc === 'gzip' || enc === 'x-gzip') stream = res.pipe(zlib.createGunzip());
+        else if (enc === 'deflate') stream = res.pipe(zlib.createInflate());
+        else if (enc !== 'identity' && enc !== '') {
+          res.destroy();
+          return reject(Object.assign(new Error('Codificación no soportada'), { code: 'BAD_ENCODING' }));
+        }
+        const chunks = [];
+        let size = 0;
+        const done = () => resolve({ status, headers, body: Buffer.concat(chunks) });
+        stream.on('data', (c) => {
+          size += c.length;
+          chunks.push(c);
+          if (size > MAX_BYTES) {
+            res.destroy();
+            done(); // se usa lo leído
+          }
+        });
+        stream.on('end', done);
+        stream.on('error', () => done()); // corte por tamaño o red: se usa lo leído
+      }
+    );
+    req.setTimeout(TIMEOUT_MS, () => req.destroy(Object.assign(new Error('Tiempo agotado'), { code: 'TIMEOUT' })));
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+/** Texto según el charset de la página (cabecera o <meta charset>); UTF-8 por defecto. */
+function decodeBody(buf, contentType) {
+  const head = buf.subarray(0, 2048).toString('latin1');
+  const label =
+    /charset=["']?([\w-]+)/i.exec(contentType)?.[1] || /<meta[^>]+charset=["']?([\w-]+)/i.exec(head)?.[1] || 'utf-8';
+  try {
+    return new TextDecoder(label).decode(buf);
+  } catch {
+    return buf.toString('utf8');
+  }
+}
+
+/**
  * Descarga una página pública y devuelve su texto.
  * @returns {Promise<{ url: string, text: string }>}
  */
@@ -100,57 +194,26 @@ export async function readSiteText(rawUrl) {
   let current = /^https?:\/\//i.test(rawUrl.trim()) ? rawUrl.trim() : `https://${rawUrl.trim()}`;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     const url = await assertPublicUrl(current);
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
     let res;
     try {
-      res = await fetch(url, {
-        redirect: 'manual',
-        signal: ctrl.signal,
-        headers: { 'User-Agent': 'RenBotIA-Demo/1.0 (+https://renbotia.com)', Accept: 'text/html,*/*;q=0.5' },
-      });
+      res = await getPage(url);
     } catch {
-      clearTimeout(timer);
       throw Object.assign(new Error('No pudimos abrir tu sitio. Revisa el enlace o descríbenos tu negocio.'), {
         code: 'FETCH_FAILED',
       });
     }
-    if (res.status >= 300 && res.status < 400 && res.headers.get('location')) {
-      clearTimeout(timer);
-      current = new URL(res.headers.get('location'), url).toString();
+    if (res.status >= 300 && res.status < 400 && res.headers.location) {
+      current = new URL(res.headers.location, url).toString();
       continue;
     }
-    if (!res.ok) {
-      clearTimeout(timer);
+    if (res.status < 200 || res.status >= 300) {
       throw Object.assign(new Error('Tu sitio no respondió. Prueba describiendo tu negocio.'), { code: 'FETCH_FAILED' });
     }
-    const type = res.headers.get('content-type') || '';
+    const type = String(res.headers['content-type'] || '');
     if (!/text\/html|application\/xhtml/i.test(type)) {
-      clearTimeout(timer);
       throw Object.assign(new Error('Ese enlace no es una página web.'), { code: 'NOT_HTML' });
     }
-    // Lectura acotada por tamaño.
-    const reader = res.body.getReader();
-    const chunks = [];
-    let size = 0;
-    try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        size += value.length;
-        chunks.push(value);
-        if (size > MAX_BYTES) {
-          ctrl.abort();
-          break;
-        }
-      }
-    } catch {
-      /* corte por tamaño o tiempo: se usa lo leído */
-    } finally {
-      clearTimeout(timer);
-    }
-    const html = Buffer.concat(chunks.map((c) => Buffer.from(c))).toString('utf8');
-    return { url: url.toString(), text: htmlToText(html) };
+    return { url: url.toString(), text: htmlToText(decodeBody(res.body, type)) };
   }
   throw Object.assign(new Error('Tu sitio redirige demasiadas veces.'), { code: 'FETCH_FAILED' });
 }

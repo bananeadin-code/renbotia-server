@@ -4,6 +4,9 @@
   "description": "Backend MVP - SaaS de bot de WhatsApp con IA para soporte/FAQ",
   "type": "module",
   "main": "src/index.js",
+  "engines": {
+    "node": ">=24.22.1 <25"
+  },
   "scripts": {
     "dev": "nodemon src/index.js",
     "start": "node src/index.js",
