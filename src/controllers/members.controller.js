@@ -1,3 +1,4 @@
+import { teamUnlockedFor } from '../utils/teamAccess.js';
 import crypto from 'crypto';
 import { MODULES, MODULE_LEVELS, CHANNELS, PRESET_ROLES, normalizeModules, normalizeChannels, resolveAccess, can } from '../config/access.js';
 import { listMemberSessions as listMemberSessionsSvc, revokeMemberSessions } from '../services/session.service.js';
@@ -90,9 +91,10 @@ export const inviteSchema = z.object({
  * En desarrollo devuelve el enlace (devLink) para probar sin correo real.
  */
 export const inviteMember = asyncHandler(async (req, res) => {
-  // Gating de plan: invitar colaboradores es solo Pro/Elite (Free = solo el dueño).
+  // Gating de plan: invitar colaboradores es solo Pro/Elite (Free = solo el dueño),
+  // salvo la excepción de soporte TEAM_FREE_OWNERS (utils/teamAccess.js).
   const sub = await Subscription.findOne({ business: req.businessId }).populate('plan', 'key');
-  if (!['pro', 'elite'].includes(sub?.plan?.key)) {
+  if (!(await teamUnlockedFor(req.businessId, sub?.plan?.key))) {
     throw new ApiError(403, 'Invitar colaboradores está disponible en los planes Pro y Elite.', {
       code: 'PLAN_REQUIRED',
       requiredPlans: ['pro', 'elite'],

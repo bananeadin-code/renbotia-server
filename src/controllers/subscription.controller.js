@@ -1,3 +1,4 @@
+import { teamUnlockedFor } from '../utils/teamAccess.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { Subscription } from '../models/Subscription.js';
 import { ApiError } from '../utils/ApiError.js';
@@ -26,6 +27,8 @@ export const getMySubscription = asyncHandler(async (req, res) => {
         id: subscription.id,
         status: subscription.status,
         plan: subscription.plan,
+        // Puede invitar colaboradores (Pro/Elite o excepción de soporte).
+        teamUnlocked: await teamUnlockedFor(req.businessId, subscription.plan?.key),
         pendingPlanKey: subscription.pendingPlanKey || '',
         currentPeriodStart: subscription.currentPeriodStart,
         renewalDate: subscription.renewalDate,
