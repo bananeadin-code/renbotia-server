@@ -339,6 +339,16 @@ export const forgotPassword = asyncHandler(async (req, res) => {
   void result;
 });
 
+/**
+ * POST /auth/password-reset (autenticado) — envía el enlace de cambio de contraseña
+ * al correo del propio usuario. No pasa por Turnstile: estar autenticado ya prueba
+ * que es una persona (el botón vive dentro del panel, en Perfil).
+ */
+export const requestMyPasswordReset = asyncHandler(async (req, res) => {
+  await authService.requestPasswordReset(req.user.email);
+  res.json({ success: true, message: 'Te enviamos un enlace a tu correo para elegir una nueva contraseña.' });
+});
+
 export const resetPassword = asyncHandler(async (req, res) => {
   await authService.resetPassword(req.body);
   res.json({ success: true, message: 'Contraseña actualizada, ya puedes iniciar sesión' });

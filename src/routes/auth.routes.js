@@ -46,6 +46,7 @@ router.post('/reset-password', authLimiter, validate(auth.resetSchema), auth.res
 // Rutas protegidas: datos del usuario autenticado + ajustes de seguridad
 router.get('/me', requireAuth, auth.me);
 router.patch('/profile', requireAuth, validate(auth.updateProfileSchema), auth.updateProfile);
+router.post('/password-reset', requireAuth, authLimiter, auth.requestMyPasswordReset); // Perfil: enlace de cambio de contraseña (sin Turnstile)
 router.patch('/2fa', requireAuth, requireRecentAuth, validate(auth.twoFactorSchema), auth.updateTwoFactor);
 // Sesiones activas (Perfil → Seguridad): ver, cerrar una o cerrar las demás.
 router.get('/sessions', requireAuth, auth.getSessions);
