@@ -75,3 +75,23 @@ export function toWhatsAppNumber(raw) {
   if (ar) return '54' + ar[1];
   return digits;
 }
+
+/**
+ * Teléfono legible para reportes: "5216181234567" → "+52 618 123 4567".
+ * México (con o sin el 1 de WhatsApp), Norteamérica y Argentina con grupos;
+ * el resto, "+" y dígitos. Si no parece teléfono, se devuelve tal cual.
+ */
+export function formatPhoneDisplay(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  if (/[a-z@]/i.test(s)) return s;
+  const d = s.replace(/\D/g, '');
+  const ten = (x) => `${x.slice(0, 3)} ${x.slice(3, 6)} ${x.slice(6)}`;
+  if (/^521\d{10}$/.test(d)) return `+52 ${ten(d.slice(3))}`;
+  if (/^52\d{10}$/.test(d)) return `+52 ${ten(d.slice(2))}`;
+  if (/^1\d{10}$/.test(d)) return `+1 ${ten(d.slice(1))}`;
+  if (/^549\d{10}$/.test(d)) return `+54 9 ${ten(d.slice(3))}`;
+  if (/^54\d{10}$/.test(d)) return `+54 ${ten(d.slice(2))}`;
+  if (d.length === 10) return ten(d);
+  return d.length >= 8 ? `+${d}` : s;
+}

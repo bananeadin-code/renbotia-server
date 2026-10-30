@@ -17,7 +17,8 @@ import { sendInstagramText } from '../services/instagram.service.js';
 import { summarizeConversation } from '../services/conversationSummary.service.js';
 import { maybeEmailWebVisitor } from '../services/webVisitor.service.js';
 import { computeServiceWindow } from '../utils/whatsappWindow.js';
-import { toCsv } from '../utils/csv.js';
+import { toXlsx, sendXlsx } from '../utils/xlsx.js';
+import { formatPhoneDisplay } from '../utils/phone.js';
 import { recordSuggestion, lastCustomerMessage, dropPending } from '../services/learning.service.js';
 import { CONVERSATION_RETENTION_DAYS } from '../config/constants.js';
 
@@ -488,42 +489,47 @@ export const summarizeConv = asyncHandler(async (req, res) => {
 });
 
 /** GET /api/conversations/export — descarga las conversaciones en CSV. */
+const CHANNEL_NAME = { whatsapp: 'WhatsApp', facebook: 'Messenger', instagram: 'Instagram', web: 'Sitio web', simulator: 'Simulador' };
+
+/** GET /api/conversations/export — Excel con las conversaciones (sin el historial completo). */
 export const exportConversations = asyncHandler(async (req, res) => {
-  const chats = await ChatSimulation.find({ business: req.businessId, channel: realChannelFilter(req) })
-    .sort({ updatedAt: -1 })
-    .limit(5000)
-    .lean();
-
-  const rows = chats.map((c) => {
-    const last = c.messages[c.messages.length - 1];
-    return {
-      fecha: new Date(c.updatedAt).toLocaleString('es-MX'),
-      canal: c.channel || 'simulator',
-      cliente: c.customerName || c.title || '',
-      telefono: c.customerPhone || '',
-      contacto: c.customerContact || '',
-      mensajes: c.messages.length,
-      modo: c.handoffMode || 'bot',
-      atencion: c.needsAttention ? 'sí' : 'no',
-      ultimo: last ? last.content : '',
-    };
-  });
-
-  const csv = toCsv(rows, [
-    { label: 'Fecha', get: (r) => r.fecha },
-    { label: 'Canal', get: (r) => r.canal },
-    { label: 'Cliente', get: (r) => r.cliente },
-    { label: 'Teléfono', get: (r) => r.telefono },
-    { label: 'Contacto (sitio web)', get: (r) => r.contacto },
-    { label: 'Mensajes', get: (r) => r.mensajes },
-    { label: 'Modo', get: (r) => r.modo },
-    { label: 'Requiere atención', get: (r) => r.atencion },
-    { label: 'Último mensaje', get: (r) => r.ultimo },
+  // Solo lo necesario por conversación: conteo y último mensaje (no todo el historial).
+  const chats = await ChatSimulation.aggregate([
+    { $match: { business: new mongoose.Types.ObjectId(String(req.businessId)), channel: realChannelFilter(req) } },
+    { $sort: { updatedAt: -1 } },
+    { $limit: 5000 },
+    {
+      $project: {
+        updatedAt: 1,
+        channel: 1,
+        customerName: 1,
+        title: 1,
+        customerPhone: 1,
+        customerContact: 1,
+        handoffMode: 1,
+        needsAttention: 1,
+        count: { $size: { $ifNull: ['$messages', []] } },
+        last: { $arrayElemAt: ['$messages.content', -1] },
+      },
+    },
   ]);
 
-  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-  res.setHeader('Content-Disposition', 'attachment; filename="conversaciones-renbotia.csv"');
-  res.send(csv);
+  const xlsx = toXlsx(
+    chats,
+    [
+      { label: 'Fecha', type: 'date', width: 17, get: (c) => c.updatedAt },
+      { label: 'Canal', width: 12, get: (c) => CHANNEL_NAME[c.channel] || c.channel || '' },
+      { label: 'Cliente', width: 26, get: (c) => c.customerName || c.title || '' },
+      { label: 'Teléfono', width: 18, get: (c) => formatPhoneDisplay(c.customerPhone) },
+      { label: 'Contacto (sitio web)', width: 24, get: (c) => c.customerContact || '' },
+      { label: 'Mensajes', type: 'number', width: 11, get: (c) => c.count },
+      { label: 'Modo', width: 10, get: (c) => (c.handoffMode === 'manual' ? 'Manual' : 'Bot') },
+      { label: 'Requiere atención', width: 18, get: (c) => (c.needsAttention ? 'Sí' : 'No') },
+      { label: 'Último mensaje', type: 'wrap', width: 60, get: (c) => c.last || '' },
+    ],
+    'Conversaciones'
+  );
+  sendXlsx(res, xlsx, 'conversaciones-renbotia.xlsx');
 });
 
 export const rateSchema = z.object({

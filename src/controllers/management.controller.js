@@ -12,7 +12,8 @@ import {
 } from '../services/management.service.js';
 import { getAvailableSlots, getAvailabilityRange } from '../services/availability.service.js';
 import { ManagedRecord } from '../models/ManagedRecord.js';
-import { toCsv } from '../utils/csv.js';
+import { toXlsx, sendXlsx } from '../utils/xlsx.js';
+import { formatPhoneDisplay } from '../utils/phone.js';
 
 const RECORD_TYPES = ['cita', 'reservacion', 'pedido', 'prospecto'];
 const RECORD_STATUSES = ['pendiente', 'confirmado', 'completado', 'cancelado'];
@@ -138,28 +139,32 @@ export const statsHandler = asyncHandler(async (req, res) => {
 
 const CHANNEL_LABEL = { whatsapp: 'WhatsApp', facebook: 'Messenger', instagram: 'Instagram', web: 'Sitio web', simulator: 'Simulador' };
 
-/** GET /api/management/export — descarga los registros (leads/trabajo) en CSV. */
+const TYPE_NAME = { cita: 'Cita', reservacion: 'Reservación', pedido: 'Pedido', prospecto: 'Prospecto' };
+const STATUS_NAME = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : '');
+
+/** GET /api/management/export — Excel con los registros (citas, pedidos, prospectos). */
 export const exportRecords = asyncHandler(async (req, res) => {
   const records = await ManagedRecord.find({ business: req.businessId, ...recordScope(req.access) })
     .sort({ createdAt: -1 })
     .limit(5000)
     .lean();
 
-  const csv = toCsv(records, [
-    { label: 'Creado', get: (r) => new Date(r.createdAt).toLocaleString('es-MX') },
-    { label: 'Tipo', get: (r) => r.type },
-    { label: 'Estado', get: (r) => r.status },
-    { label: 'Cliente', get: (r) => r.customer?.name || '' },
-    { label: 'Contacto', get: (r) => r.customer?.contact || '' },
-    { label: 'Agendado', get: (r) => (r.scheduledAt ? new Date(r.scheduledAt).toLocaleString('es-MX') : '') },
-    { label: 'Cantidad', get: (r) => r.quantity ?? '' },
-    { label: 'Resumen', get: (r) => r.summary || '' },
-    { label: 'Notas', get: (r) => r.notes || '' },
-    { label: 'Origen', get: (r) => r.source || '' },
-    { label: 'Canal', get: (r) => CHANNEL_LABEL[r.channel] || (r.source === 'manual' ? 'Manual' : '') },
-  ]);
-
-  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-  res.setHeader('Content-Disposition', 'attachment; filename="registros-renbotia.csv"');
-  res.send(csv);
+  const xlsx = toXlsx(
+    records,
+    [
+      { label: 'Creado', type: 'date', width: 17, get: (r) => r.createdAt },
+      { label: 'Tipo', width: 13, get: (r) => TYPE_NAME[r.type] || r.type || '' },
+      { label: 'Estado', width: 13, get: (r) => STATUS_NAME(r.status) },
+      { label: 'Cliente', width: 24, get: (r) => r.customer?.name || '' },
+      { label: 'Contacto', width: 20, get: (r) => formatPhoneDisplay(r.customer?.contact) },
+      { label: 'Agendado', type: 'date', width: 17, get: (r) => r.scheduledAt || '' },
+      { label: 'Cantidad', type: 'number', width: 10, get: (r) => r.quantity ?? '' },
+      { label: 'Resumen', type: 'wrap', width: 40, get: (r) => r.summary || '' },
+      { label: 'Notas', type: 'wrap', width: 40, get: (r) => r.notes || '' },
+      { label: 'Origen', width: 10, get: (r) => (r.source === 'bot' ? 'Bot' : 'Manual') },
+      { label: 'Canal', width: 12, get: (r) => CHANNEL_LABEL[r.channel] || (r.source === 'manual' ? 'Manual' : '') },
+    ],
+    'Registros'
+  );
+  sendXlsx(res, xlsx, 'registros-renbotia.xlsx');
 });
