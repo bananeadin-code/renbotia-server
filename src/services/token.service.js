@@ -47,7 +47,8 @@ export async function applyLazyReset(subscription) {
   if (subscription.renewalDate.getTime() > now) return subscription;
 
   const targetKey = nextPeriodPlanKey(subscription);
-  if (isPaidPlanKey(targetKey)) return subscription; // lo renueva el cobrador
+  // De pago: lo renueva el cobrador (salvo cortesía, que se renueva aquí sin cobro).
+  if (isPaidPlanKey(targetKey) && !subscription.complimentary) return subscription;
 
   let periodStart = subscription.renewalDate;
   let renewal = subscription.renewalDate;

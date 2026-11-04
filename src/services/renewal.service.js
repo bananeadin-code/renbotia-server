@@ -243,8 +243,8 @@ export async function renewSubscription(subId, now = new Date()) {
   try {
     const targetKey = nextPeriodPlanKey(sub);
 
-    // Periodo gratis (Free, cancelado, fin del regalo): sin cobro.
-    if (!isPaidPlanKey(targetKey)) {
+    // Periodo gratis (Free, cancelado, fin del regalo) o cortesía: sin cobro.
+    if (!isPaidPlanKey(targetKey) || sub.complimentary) {
       await applyLazyReset(sub);
       return 'free';
     }
@@ -347,7 +347,7 @@ async function sendUpcomingReminders(now) {
   let sent = 0;
   for (const sub of subs) {
     const targetKey = nextPeriodPlanKey(sub);
-    if (!isPaidPlanKey(targetKey)) continue;
+    if (!isPaidPlanKey(targetKey) || sub.complimentary) continue;
     if (sub.renewalReminderFor && sub.renewalReminderFor.getTime() === sub.renewalDate.getTime()) continue;
 
     // Marca primero (atómico) para no enviar dos veces en paralelo.

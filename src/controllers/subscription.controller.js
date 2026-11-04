@@ -35,7 +35,8 @@ export const getMySubscription = asyncHandler(async (req, res) => {
         // Renovación con cobro: qué plan sigue, cuánto se cobrará y si hay un
         // pago pendiente (vencida) con su fecha límite antes de bajar a Free.
         nextPlanKey,
-        renewalAmountMXN: isPaidPlanKey(nextPlanKey)
+        complimentary: Boolean(subscription.complimentary),
+        renewalAmountMXN: isPaidPlanKey(nextPlanKey) && !subscription.complimentary
           ? PLANS.find((p) => p.key === nextPlanKey)?.priceMXN ?? 0
           : 0,
         renewalDue: subscription.renewalDate.getTime() <= Date.now() && isPaidPlanKey(nextPlanKey),

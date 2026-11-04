@@ -53,6 +53,9 @@ const subscriptionSchema = new mongoose.Schema(
     renewalLockUntil: { type: Date, default: null },
     // Fecha de renovación para la que ya se envió el aviso previo (anti-spam).
     renewalReminderFor: { type: Date, default: null },
+    // Cortesía (cuentas internas o de soporte): el plan se renueva cada mes SIN
+    // cobro ni avisos de pago. Solo se activa por script (scripts/set-comp-plan.mjs).
+    complimentary: { type: Boolean, default: false },
   },
   { timestamps: true }
 );
