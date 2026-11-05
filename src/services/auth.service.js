@@ -1,3 +1,4 @@
+import { cleanAcquisition, onSignupComplete } from './funnel.service.js';
 import crypto from 'crypto';
 import { OAuth2Client } from 'google-auth-library';
 import { User } from '../models/User.js';
@@ -25,7 +26,7 @@ const LOCK_MINUTES = 15;
 // Cada inicio de sesión exitoso termina en finishLogin: entra directo a su único
 // contexto (dueño o proyecto) o pide elegir si tiene varios (ver access.service).
 
-export async function registerUser({ name, email, password, ref }) {
+export async function registerUser({ name, email, password, ref, acq, ctx = {} }) {
   // Bloqueo de correos desechables/temporales (anti-abuso de cuentas Free).
   if (isDisposableEmail(email)) {
     throw ApiError.badRequest(
@@ -40,6 +41,8 @@ export async function registerUser({ name, email, password, ref }) {
 
   // La cuenta se crea SIN verificar: primero debe confirmar el código del correo.
   const user = new User({ name, email, emailVerified: false, referredBy: await resolveReferrer(ref) });
+  const acquisition = cleanAcquisition(acq, ctx);
+  if (acquisition) user.acquisition = acquisition;
   await user.setPassword(password);
   await user.save();
 
@@ -143,6 +146,7 @@ export async function verifyEmailAndLogin({ email, code, ctx = {} }) {
     await user.save();
     // Bienvenida (cálida) al activar la cuenta. Fail-open, no bloquea el login.
     void sendWelcomeEmail({ to: user.email, customerName: user.name });
+    void onSignupComplete(user, ctx); // embudo: aviso al equipo y conversión
   }
   return finishLogin(user, ctx, { mfa: false });
 }
@@ -223,7 +227,7 @@ function getGoogleClient() {
  * Si el correo ya tiene cuenta, la vincula; si no, crea una cuenta sin contraseña.
  * @param {string} credential - ID token JWT emitido por Google Identity Services
  */
-export async function googleAuth(credential, ref, ctx = {}) {
+export async function googleAuth(credential, ref, ctx = {}, acq = null) {
   const client = getGoogleClient();
   let payload;
   try {
@@ -240,6 +244,7 @@ export async function googleAuth(credential, ref, ctx = {}) {
   const googleId = payload.sub;
   const name = payload.name || email.split('@')[0];
 
+  let isNewUser = false;
   let user = await User.findOne({ googleId }).select('+googleId');
   if (!user) {
     user = await User.findOne({ email }).select('+googleId');
@@ -259,13 +264,18 @@ export async function googleAuth(credential, ref, ctx = {}) {
     } else {
       // Cuenta nueva por Google: verificada de origen y sin 2FA (Google autentica).
       user = new User({ name, email, googleId, emailVerified: true, referredBy: await resolveReferrer(ref) });
+      const acquisition = cleanAcquisition(acq, ctx);
+      if (acquisition) user.acquisition = acquisition;
       await user.save();
       void sendWelcomeEmail({ to: user.email, customerName: user.name });
+      void onSignupComplete(user, ctx);
+      isNewUser = true;
     }
   }
 
   // Google ya autenticó con su propia seguridad: cuenta como segundo factor.
-  return finishLogin(user, ctx, { mfa: true });
+  const result = await finishLogin(user, ctx, { mfa: true });
+  return isNewUser ? { ...result, isNewUser: true } : result;
 }
 
 /**

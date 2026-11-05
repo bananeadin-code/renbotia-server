@@ -15,6 +15,7 @@ import { syncPlans } from './services/syncPlans.service.js';
 import { backfillRecordChannels } from './services/management.service.js';
 import { startReminderScheduler } from './services/reminder.service.js';
 import { startPaymentReconciler } from './services/fulfillment.service.js';
+import { startFunnelScheduler } from './services/funnel.service.js';
 
 /**
  * Punto de entrada: conecta a la base de datos y arranca el servidor HTTP.
@@ -49,6 +50,8 @@ async function start() {
   startWeeklyReportScheduler();
   // Renovación mensual con cobro a la tarjeta guardada (Pro/Elite).
   startRenewalScheduler();
+  // Embudo comercial: pendientes diarios al equipo y reporte semanal (lunes).
+  startFunnelScheduler();
 
   // Apagado ordenado (cada deploy en Render manda SIGTERM y espera ~30 s): deja
   // de aceptar conexiones, termina las peticiones en curso y el trabajo de fondo

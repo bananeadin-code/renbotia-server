@@ -1,3 +1,5 @@
+import { onChannelConnected } from '../services/funnel.service.js';
+import { requestContext } from '../services/session.service.js';
 import crypto from 'node:crypto';
 import { isBlocked } from '../utils/blocklist.js';
 import { z } from 'zod';
@@ -168,6 +170,7 @@ export const updateWidget = asyncHandler(async (req, res) => {
       action: 'widget.toggle',
       summary: enabled ? 'Activó el widget del sitio web.' : 'Desactivó el widget del sitio web.',
     });
+    if (enabled) void onChannelConnected(business, 'web', requestContext(req)); // embudo
   }
   res.json({ success: true, data: widgetView(business, planKey) });
 });

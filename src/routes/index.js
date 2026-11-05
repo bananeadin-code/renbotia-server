@@ -11,6 +11,7 @@ import chatRoutes from './chat.routes.js';
 import simulatorRoutes from './simulator.routes.js';
 import billingRoutes from './billing.routes.js';
 import managementRoutes from './management.routes.js';
+import funnelRoutes from './funnel.routes.js';
 import adminRoutes from './admin.routes.js';
 import demoRoutes from './demo.routes.js';
 import siteAssistantRoutes from './siteAssistant.routes.js';
@@ -96,5 +97,6 @@ router.use('/media', mediaRoutes); // público: imágenes del bot por URL (Insta
 router.use('/widget', widgetRoutes); // panel + público (chat web incrustable)
 router.use('/members', memberRoutes);
 router.use('/admin', adminRoutes);
+router.use('/funnel', funnelRoutes); // embudo comercial / CRM (admin y soporte)
 
 export default router;

@@ -17,12 +17,33 @@ import { describeDevice } from '../utils/userAgent.js';
 /**
  * Esquemas de validación (Zod). Se exportan para usarse en las rutas.
  */
+// Origen del registro (UTM / clic de anuncio / consentimiento de cookies de medición).
+const acqText = (max) => z.string().max(max).optional();
+const acqSchema = z
+  .object({
+    source: acqText(80),
+    medium: acqText(80),
+    campaign: acqText(150),
+    content: acqText(150),
+    term: acqText(150),
+    gclid: acqText(200),
+    fbclid: acqText(300),
+    fbp: acqText(100),
+    fbc: acqText(400),
+    landing: acqText(300),
+    referrer: acqText(300),
+    firstSeenAt: acqText(40),
+    adsConsent: z.boolean().optional(),
+  })
+  .optional();
+
 export const registerSchema = z.object({
   name: z.string().trim().min(2, 'El nombre debe tener al menos 2 caracteres').max(80, 'El nombre es demasiado largo'),
   email: z.string().email('Email inválido').max(254),
   // bcrypt solo usa los primeros 72 bytes: más largo no aporta y se acota.
   password: z.string().min(8, 'La contraseña debe tener al menos 8 caracteres').max(72, 'Usa una contraseña de máximo 72 caracteres'),
   ref: z.string().max(16).optional(), // código de referido (enlace de invitación)
+  acq: acqSchema,
 });
 
 export const loginSchema = z.object({
@@ -98,7 +119,7 @@ function sendAuthResponse(res, result, status = 200) {
 export const register = asyncHandler(async (req, res) => {
   // Devuelve { needsEmailVerification, email, devCode? }: el cliente pide el código
   // y llama a verify-email. No se emite sesión hasta verificar el correo.
-  const result = await authService.registerUser(req.body);
+  const result = await authService.registerUser({ ...req.body, ctx: requestContext(req) });
   res.status(201).json({ success: true, data: result });
 });
 
@@ -157,10 +178,11 @@ export const verifyEmailChange = asyncHandler(async (req, res) => {
 export const googleSchema = z.object({
   credential: z.string().min(20, 'Credencial de Google inválida'),
   ref: z.string().max(16).optional(), // código de referido (solo cuenta en cuentas nuevas)
+  acq: acqSchema,
 });
 
 export const googleAuth = asyncHandler(async (req, res) => {
-  const result = await authService.googleAuth(req.body.credential, req.body.ref, requestContext(req));
+  const result = await authService.googleAuth(req.body.credential, req.body.ref, requestContext(req), req.body.acq);
   sendAuthResponse(res, result);
 });
 

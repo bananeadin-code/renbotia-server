@@ -1,3 +1,4 @@
+import { onPurchase } from './funnel.service.js';
 import { track, isClosing } from '../utils/inflight.js';
 import { PLANS, CREDIT_PACKS } from '../config/constants.js';
 import { Business } from '../models/Business.js';
@@ -107,6 +108,7 @@ export async function fulfillPaymentIntent(pi) {
     });
     void sendPurchaseReceipt({ userId: m.userId, businessName: business.name, type: 'plan', description: `Plan ${plan.name}`, amountMXN, reference: pi.id });
     void qualifyReferral(m.userId);
+    void onPurchase(claim); // embudo: conversión de compra
     return { applied: true, type: 'plan', upgraded: true };
   }
 
@@ -133,6 +135,7 @@ export async function fulfillPaymentIntent(pi) {
       await Payment.deleteOne({ _id: claim._id });
       throw err;
     }
+    void onPurchase(claim); // embudo: conversión de compra
     void sendPurchaseReceipt({
       userId: m.userId,
       businessName: business.name,

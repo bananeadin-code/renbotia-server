@@ -251,6 +251,8 @@ export const WALLET_DISCOUNT = 0.85;
 export const ROLES = {
   CLIENTE: 'cliente',
   ADMIN: 'admin',
+  // Equipo comercial de RenBotIA: ve el embudo/CRM, no el resto del admin.
+  SOPORTE: 'soporte',
 };
 
 export const BUSINESS_STATUS = {

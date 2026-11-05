@@ -1,4 +1,6 @@
 import crypto from 'node:crypto';
+import { onChannelConnected } from '../services/funnel.service.js';
+import { requestContext } from '../services/session.service.js';
 import { z } from 'zod';
 import { qualifyReferral } from '../services/referral.service.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
@@ -231,6 +233,7 @@ export const connectWhatsApp = asyncHandler(async (req, res) => {
   business.whatsappVerifiedAt = new Date();
   await business.save();
   void qualifyReferral(business.owner); // uso real: el referido cuenta
+  void onChannelConnected(business, 'whatsapp', requestContext(req)); // embudo
 
   void logAudit({
     businessId: req.businessId,
@@ -290,6 +293,7 @@ async function linkPage(req, page) {
   business.facebookConnectedAt = new Date();
   await business.save();
   void qualifyReferral(business.owner); // uso real: el referido cuenta
+  void onChannelConnected(business, 'messenger', requestContext(req)); // embudo
   // Reaplica las preguntas iniciales y el saludo guardados (si los hay).
   void pushProfile(business, 'facebook');
 
@@ -458,6 +462,7 @@ async function linkInstagram(req, acc) {
   business.instagramConnectedAt = new Date();
   await business.save();
   void qualifyReferral(business.owner); // uso real: el referido cuenta
+  void onChannelConnected(business, 'instagram', requestContext(req)); // embudo
   void pushProfile(business, 'instagram');
 
   void logAudit({

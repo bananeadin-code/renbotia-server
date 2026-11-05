@@ -58,6 +58,26 @@ const userSchema = new mongoose.Schema(
     referredBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null, index: true },
     referralQualifiedAt: { type: Date, default: null },
     referralRewards: { type: Number, default: 0 },
+    // ── Origen del registro (embudo de marketing) ──
+    // Última visita con campaña antes de registrarse (UTM o clic de anuncio) y
+    // si aceptó cookies de medición. Solo con consentimiento se envía a Meta/Google.
+    acquisition: {
+      source: { type: String, default: '' }, // utm_source (facebook, google, …) o "directo"
+      medium: { type: String, default: '' },
+      campaign: { type: String, default: '' },
+      content: { type: String, default: '' },
+      term: { type: String, default: '' },
+      gclid: { type: String, default: '' },
+      fbclid: { type: String, default: '' },
+      fbp: { type: String, default: '' },
+      fbc: { type: String, default: '' },
+      landing: { type: String, default: '' },
+      referrer: { type: String, default: '' },
+      firstSeenAt: { type: Date, default: null },
+      adsConsent: { type: Boolean, default: false },
+      ip: { type: String, default: '' },
+      userAgent: { type: String, default: '' },
+    },
   },
   { timestamps: true }
 );
@@ -90,6 +110,7 @@ userSchema.methods.toJSON = function toJSON() {
   delete obj.tokenVersion;
   delete obj.failedLoginAttempts;
   delete obj.lockUntil;
+  delete obj.acquisition; // datos internos de marketing (IP, navegador, campaña)
   delete obj.__v;
   return obj;
 };

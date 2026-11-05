@@ -113,6 +113,21 @@ export const env = {
     embeddedEnabled: process.env.WHATSAPP_EMBEDDED_ENABLED === 'true',
   },
 
+  // API de Conversiones de Meta (eventos de registro/canal/pago desde el servidor).
+  metaCapi: {
+    pixelId: process.env.META_PIXEL_ID || '',
+    token: process.env.META_CAPI_TOKEN || '',
+    apiVersion: process.env.META_CAPI_API_VERSION || 'v26.0',
+    testCode: process.env.META_CAPI_TEST_CODE || '',
+  },
+
+  // Embudo comercial: correos del equipo que recibe avisos de nuevos registros y
+  // del reporte semanal (separados por coma).
+  funnel: {
+    alertEmails: (process.env.SALES_ALERT_EMAILS || '').split(',').map((s) => s.trim()).filter(Boolean),
+    reportEmails: (process.env.FUNNEL_REPORT_EMAILS || '').split(',').map((s) => s.trim()).filter(Boolean),
+  },
+
   // Facebook Messenger (Fase 3 multicanal). Usa la MISMA app de Meta que WhatsApp
   // (appId/appSecret/versión se toman de `whatsapp`). Solo agrega:
   //  - messengerEnabled: gatea la conexión hasta que Meta apruebe `pages_messaging`.
