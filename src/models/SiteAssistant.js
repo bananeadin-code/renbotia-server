@@ -42,7 +42,7 @@ const siteAssistantSchema = new mongoose.Schema(
       basePricing: {
         type: String,
         default:
-          'Free $0 (50,000 tokens, sin tarjeta) · Pro $429 MXN/mes (1,000,000 tokens) · Elite $999 MXN/mes (5,000,000 tokens + gestión de citas). También hay paquetes de créditos extra.',
+          'Free $0 (50,000 tokens, sin tarjeta) · Pro $479 MXN/mes (1,000,000 tokens) · Elite $999 MXN/mes (5,000,000 tokens + gestión de citas). También hay paquetes de créditos extra.',
       },
     },
     faqs: {
@@ -56,7 +56,7 @@ const siteAssistantSchema = new mongoose.Schema(
         {
           question: '¿Cuánto cuesta?',
           answer:
-            'Hay un plan Free gratis con 50,000 tokens para probar sin tarjeta. Pro cuesta $429 MXN/mes (1 millón de tokens) y Elite $999 MXN/mes (5 millones + gestión de citas). También puedes comprar paquetes de créditos extra.',
+            'Hay un plan Free gratis con 50,000 tokens para probar sin tarjeta. Pro cuesta $479 MXN/mes (1 millón de tokens) y Elite $999 MXN/mes (5 millones + gestión de citas). También puedes comprar paquetes de créditos extra.',
         },
         {
           question: '¿Necesito saber programar?',

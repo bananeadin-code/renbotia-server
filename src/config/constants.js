@@ -22,7 +22,7 @@ export const PLANS = [
   {
     key: 'pro',
     name: 'Pro',
-    priceMXN: 429,
+    priceMXN: 479,
     monthlyTokenLimit: 1_000_000,
     highlights: [
       '1,000,000 de tokens de IA al mes (20× más que Free)',
