@@ -166,7 +166,7 @@ export async function funnelRows({ from, to, limit = 5000 } = {}) {
     Lead.find({ user: { $in: ids } }).populate('assignee', 'name email').lean(),
   ]);
   const subs = await Subscription.find({ business: { $in: businesses.map((b) => b._id) } })
-    .select('business plan complimentary')
+    .select('business plan complimentary billingCycle')
     .populate('plan', 'key')
     .lean();
 
@@ -198,9 +198,12 @@ export async function funnelRows({ from, to, limit = 5000 } = {}) {
       createdAt: u.createdAt,
       channel: channelOf(u),
       campaign: u.acquisition?.campaign || '',
+      source: u.acquisition?.source || '',
+      content: u.acquisition?.content || '',
       business: b ? { id: String(b._id), name: b.name, industry: b.industry, phone: b.whatsappNumber || '' } : null,
       channels,
       planKey,
+      cycle: sub?.billingCycle || 'mensual',
       complimentary: Boolean(sub?.complimentary),
       revenueMXN: pay?.total || 0,
       firstPaymentAt: pay?.first || null,
@@ -215,6 +218,7 @@ export async function funnelRows({ from, to, limit = 5000 } = {}) {
             lostReason: lead.lostReason,
             notes: (lead.notes || []).slice(-20),
             firstContactAt: lead.firstContactAt,
+            orientationAt: lead.orientationAt || null,
           }
         : null,
     };

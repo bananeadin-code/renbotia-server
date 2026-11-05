@@ -31,6 +31,8 @@ const leadSchema = new mongoose.Schema(
     // Correos automáticos de ayuda para conectar un canal (máximo 2).
     nudgesSent: { type: Number, default: 0 },
     lastNudgeAt: { type: Date, default: null },
+    // Sesión de orientación por videollamada realizada (la marca el equipo).
+    orientationAt: { type: Date, default: null },
   },
   { timestamps: true }
 );

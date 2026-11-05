@@ -102,6 +102,25 @@ export function receiptEmail(p) {
             </table>
           </td>
         </tr>
+        ${
+          Array.isArray(p.notes) && p.notes.length
+            ? `<!-- Notas (plan anual, garantía, orientación) -->
+        <tr>
+          <td style="padding:0 28px 16px;">
+            ${p.notes
+              .map(
+                (n) =>
+                  `<p style="margin:0 0 8px;color:${ink};font-size:14px;line-height:1.6;">${escapeHtml(n.text)}${
+                    n.href && /^https:\/\//.test(n.href)
+                      ? ` <a href="${escapeHtml(n.href)}" style="color:${brand};font-weight:700;">${escapeHtml(n.linkText || 'Abrir')}</a>`
+                      : ''
+                  }</p>`
+              )
+              .join('')}
+          </td>
+        </tr>`
+            : ''
+        }
         <!-- CTA -->
         <tr>
           <td style="padding:0 28px 24px;">

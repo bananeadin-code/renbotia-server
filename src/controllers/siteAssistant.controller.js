@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { SiteAssistant } from '../models/SiteAssistant.js';
 import { buildSystemPrompt } from '../services/promptBuilder.service.js';
+import { annualPricingText } from '../services/pricing.service.js';
 import { generateReply } from '../services/claude.service.js';
 import { MODEL_BY_PLAN } from '../config/constants.js';
 import { logger } from '../utils/logger.js';
@@ -32,7 +33,8 @@ function toBotConfig(cfg) {
       hours: cfg.businessInfo?.hours || '',
       location: cfg.businessInfo?.location || '',
       services: cfg.businessInfo?.services || [],
-      basePricing: cfg.businessInfo?.basePricing || '',
+      // + plan anual vigente (precio de fundador o normal), armado al momento.
+      basePricing: [cfg.businessInfo?.basePricing || '', annualPricingText()].filter(Boolean).join(' '),
     },
     faqs: (cfg.faqs || []).filter((f) => f.question && f.answer),
     images: [],

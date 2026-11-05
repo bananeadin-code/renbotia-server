@@ -10,7 +10,23 @@ import {
   retrievePaymentMethod,
   setDefaultPaymentMethod,
   detachPaymentMethod,
+  createRefund,
 } from '../services/stripe.service.js';
+import {
+  hasActiveAnnual,
+  insidePaidTerm,
+  nextCycle,
+  quotePlanPurchase,
+  renewalPrice,
+  guaranteeActive,
+  monthlyPrice,
+} from '../services/pricing.service.js';
+import { ANNUAL_RESET } from '../services/token.service.js';
+import { sendRenewalNoticeEmail } from '../services/email.service.js';
+import { alertOps } from '../services/alert.service.js';
+import { Plan } from '../models/Plan.js';
+import { BillingProfile } from '../models/BillingProfile.js';
+import { addMonths } from '../utils/dates.js';
 import { ensureCustomer, ensureProfile } from '../services/billingProfile.service.js';
 import { loadBusinessBundle } from '../services/business.service.js';
 import { isPaidPlanKey, nextPeriodPlanKey, computeBalance } from '../services/token.service.js';
@@ -25,7 +41,11 @@ import { Payment } from '../models/Payment.js';
 const findPlan = (key) => PLANS.find((p) => p.key === key);
 const findPack = (key) => CREDIT_PACKS.find((p) => p.key === key);
 
-export const changePlanSchema = z.object({ planKey: z.enum(['free', 'pro', 'elite']) });
+export const changePlanSchema = z.object({
+  planKey: z.enum(['free', 'pro', 'elite']),
+  // Solo para quien tiene un año vigente: 'mensual' = pasar a mensual al terminar el año.
+  cycle: z.enum(['mensual', 'anual']).optional(),
+});
 
 // Crea un PaymentIntent para una compra (plan, paquete de créditos o el pago
 // manual de una renovación vencida). El Free se activa en el onboarding.
@@ -33,6 +53,7 @@ export const createIntentSchema = z
   .object({
     kind: z.enum(['plan', 'credits', 'renewal']),
     planKey: z.enum(['pro', 'elite']).optional(),
+    cycle: z.enum(['mensual', 'anual']).optional(),
     packKey: z.enum(CREDIT_PACKS.map((p) => p.key)).optional(),
     useSavedCard: z.boolean().optional(), // compatibilidad: siempre se usa la guardada
   })
@@ -81,20 +102,17 @@ export const createIntent = asyncHandler(async (req, res) => {
   let metadata;
 
   if (kind === 'plan') {
-    const plan = findPlan(req.body.planKey);
-    if (!plan) throw ApiError.badRequest('Plan inválido');
-    // Solo mejoras: bajar de plan o mantenerlo se programa para la renovación.
-    const currentPrice = findPlan(sub.plan?.key)?.priceMXN ?? 0;
-    if (plan.priceMXN <= currentPrice) {
-      throw ApiError.badRequest('Para bajar o mantener tu plan usa "Cambiar plan"; aplica en tu renovación.');
-    }
-    amountMXN = plan.priceMXN;
-    description = `Plan ${plan.name} — RenBotIA`;
+    // Mensual, anual nuevo o mejora proporcional a mitad del año (ver pricing.service).
+    const q = quotePlanPurchase(sub, req.body.planKey, req.body.cycle, new Date());
+    if (q.error) throw ApiError.badRequest(q.error);
+    amountMXN = q.amountMXN;
+    description = q.description;
     metadata = {
       type: 'plan',
-      planKey: plan.key,
+      planKey: req.body.planKey,
       userId: String(req.userId),
       businessId: String(business._id),
+      ...q.meta,
     };
   } else if (kind === 'credits') {
     const pack = findPack(req.body.packKey);
@@ -111,9 +129,10 @@ export const createIntent = asyncHandler(async (req, res) => {
     // Renovación vencida pagada a mano.
     const targetKey = nextPeriodPlanKey(sub);
     const plan = findPlan(targetKey);
-    if (sub.renewalDate.getTime() > Date.now() || !isPaidPlanKey(targetKey) || !plan) {
+    if (sub.renewalDate.getTime() > Date.now() || !isPaidPlanKey(targetKey) || !plan || insidePaidTerm(sub)) {
       throw ApiError.badRequest('No tienes una renovación pendiente de pago.');
     }
+    const renewCycle = nextCycle(sub);
     // Candado: mientras este pago está en curso, el cobrador automático no
     // intenta cobrar el mismo periodo (evita cobrar dos veces).
     const now = new Date();
@@ -130,10 +149,11 @@ export const createIntent = asyncHandler(async (req, res) => {
         code: 'RENEWAL_IN_PROGRESS',
       });
     }
-    amountMXN = plan.priceMXN;
-    description = `Renovación Plan ${plan.name} — RenBotIA`;
+    amountMXN = renewalPrice(sub, plan.key, renewCycle);
+    description = `Renovación${renewCycle === 'anual' ? ' anual' : ''} Plan ${plan.name} — RenBotIA`;
     metadata = {
       type: 'renewal',
+      cycle: renewCycle,
       planKey: plan.key,
       userId: String(req.userId),
       businessId: String(business._id),
@@ -183,6 +203,34 @@ export const createIntent = asyncHandler(async (req, res) => {
       publishableKey: env.stripe.publishableKey,
       amountMXN,
       description,
+    },
+  });
+});
+
+export const quoteSchema = z.object({
+  planKey: z.enum(['pro', 'elite']),
+  cycle: z.enum(['mensual', 'anual']).optional(),
+});
+
+/**
+ * GET /api/billing/quote?planKey=pro&cycle=anual
+ * Monto exacto que se cobraría (el mismo cálculo que /intent): el checkout lo
+ * muestra antes de pagar, incluida la mejora proporcional a mitad del año.
+ */
+export const quotePlan = asyncHandler(async (req, res) => {
+  const parsed = quoteSchema.safeParse(req.query);
+  if (!parsed.success) throw ApiError.badRequest('Plan o ciclo inválido');
+  const sub = await loadSub(req.businessId);
+  const q = quotePlanPurchase(sub, parsed.data.planKey, parsed.data.cycle);
+  if (q.error) throw ApiError.badRequest(q.error);
+  res.json({
+    success: true,
+    data: {
+      amountMXN: q.amountMXN,
+      description: q.description.replace(/ — RenBotIA$/, ''),
+      cycle: q.meta.cycle,
+      mode: q.meta.mode,
+      startsAt: q.meta.annualStart && q.meta.annualStart !== '0' ? new Date(Number(q.meta.annualStart)) : null,
     },
   });
 });
@@ -266,7 +314,10 @@ export const cancelSubscription = asyncHandler(async (req, res) => {
   const sub = await loadSub(req.businessId);
   sub.status = 'cancelada';
   sub.pendingPlanKey = ''; // una cancelación descarta un cambio programado
+  sub.pendingCycle = '';
   await sub.save();
+  // En anual conserva el plan hasta que termina el año pagado.
+  const until = hasActiveAnnual(sub) ? sub.termEndsAt : sub.renewalDate;
   void logAudit({
     businessId: req.businessId,
     userId: req.userId,
@@ -275,8 +326,10 @@ export const cancelSubscription = asyncHandler(async (req, res) => {
   });
   res.json({
     success: true,
-    message: 'Tu plan no se renovará. Conservas acceso hasta la fecha de renovación.',
-    data: { status: sub.status, renewalDate: sub.renewalDate },
+    message: `Tu plan no se renovará. Conservas acceso hasta el ${until.toLocaleDateString('es-MX', {
+      timeZone: 'America/Mexico_City',
+    })}.`,
+    data: { status: sub.status, renewalDate: sub.renewalDate, accessUntil: until },
   });
 });
 
@@ -320,6 +373,34 @@ export const changePlan = asyncHandler(async (req, res) => {
   // Seguir en un plan de pago exige tarjeta guardada (se cobrará al renovar).
   if (isPaidPlanKey(targetKey) && !(await hasSavedCard(req.businessId))) throw CARD_FOR_RENEWAL();
 
+  // Con un año vigente, los cambios aplican al terminar el año.
+  if (hasActiveAnnual(sub)) {
+    const endStr = sub.termEndsAt.toLocaleDateString('es-MX', { timeZone: 'America/Mexico_City' });
+    if (monthlyPrice(targetKey) > monthlyPrice(currentKey)) {
+      throw ApiError.badRequest('Para subir de plan con tu año vigente, elige el plan y paga solo la diferencia proporcional.');
+    }
+    const wantMonthly = req.body.cycle === 'mensual';
+    if (targetKey === currentKey && !wantMonthly) {
+      sub.pendingPlanKey = '';
+      sub.pendingCycle = '';
+      if (sub.status === 'cancelada') sub.status = 'activa';
+      await sub.save();
+      return res.json({ success: true, message: 'Se mantendrá tu plan anual actual.', data: { pendingPlanKey: '', pendingCycle: '', status: sub.status } });
+    }
+    sub.pendingPlanKey = targetKey === currentKey ? '' : targetKey;
+    sub.pendingCycle = isPaidPlanKey(targetKey) && wantMonthly ? 'mensual' : '';
+    if (sub.status === 'cancelada') sub.status = 'activa';
+    await sub.save();
+    const what = isPaidPlanKey(targetKey)
+      ? `${findPlan(targetKey).name}${wantMonthly ? ' mensual' : ' anual'}`
+      : 'Free';
+    return res.json({
+      success: true,
+      message: `Cambio programado a ${what} al terminar tu año (${endStr}).`,
+      data: { pendingPlanKey: sub.pendingPlanKey, pendingCycle: sub.pendingCycle, status: sub.status },
+    });
+  }
+
   // Si elige su plan actual, se interpreta como "deshacer" el cambio programado.
   if (targetKey === currentKey) {
     sub.pendingPlanKey = '';
@@ -341,6 +422,99 @@ export const changePlan = asyncHandler(async (req, res) => {
       sub.renewalDate
     ).toLocaleDateString('es-MX')}).`,
     data: { pendingPlanKey: targetKey, status: sub.status },
+  });
+});
+
+/**
+ * POST /api/billing/guarantee-refund
+ * Garantía de 30 días del plan anual: devuelve TODO lo pagado por el año (y por
+ * mejoras hechas dentro de la garantía) y la cuenta pasa a Free al instante.
+ * Solo una vez por negocio y solo dentro de los 30 días de la primera compra anual.
+ */
+export const guaranteeRefund = asyncHandler(async (req, res) => {
+  const now = new Date();
+  // Reclamo atómico: dos clics a la vez no reembolsan dos veces.
+  const sub = await Subscription.findOneAndUpdate(
+    { business: req.businessId, guaranteeEndsAt: { $gt: now }, 'guaranteePaymentIds.0': { $exists: true } },
+    { $set: { guaranteeEndsAt: null } },
+    { new: false }
+  ).populate('plan');
+  if (!sub || !guaranteeActive(sub, now)) {
+    throw ApiError.badRequest('Tu garantía de 30 días ya no está vigente.');
+  }
+
+  const refunded = [];
+  let total = 0;
+  try {
+    for (const piId of sub.guaranteePaymentIds) {
+      const payment = await Payment.findOne({ business: req.businessId, stripeSessionId: piId });
+      if (!payment || payment.status === 'refunded') continue;
+      const r = await createRefund({
+        paymentIntentId: piId,
+        metadata: { type: 'guarantee', businessId: String(req.businessId), userId: String(req.userId) },
+        idempotencyKey: `guarantee_${piId}`,
+      });
+      payment.status = 'refunded';
+      payment.refundedAt = new Date();
+      payment.refundId = r.id;
+      await payment.save();
+      refunded.push(piId);
+      total += payment.amountMXN;
+    }
+  } catch (err) {
+    // Algo falló con Stripe: se devuelve la garantía para reintentar (las
+    // devoluciones ya hechas no se repiten gracias a la clave de idempotencia).
+    await Subscription.updateOne({ _id: sub._id }, { $set: { guaranteeEndsAt: sub.guaranteeEndsAt } });
+    logger.error(`Garantía ${sub._id}: ${err.message}`);
+    alertOps({ kind: 'billing', message: `Falló el reembolso de garantía de ${sub._id}: ${err.message}` });
+    throw new ApiError(502, 'No pudimos procesar el reembolso en este momento. Intenta de nuevo en unos minutos.');
+  }
+
+  // Pasa a Free al instante (conserva bot, configuración y créditos comprados).
+  const free = await Plan.findOne({ key: 'free' });
+  await Subscription.updateOne(
+    { _id: sub._id },
+    {
+      $set: {
+        ...ANNUAL_RESET,
+        plan: free._id,
+        status: 'activa',
+        pendingPlanKey: '',
+        currentPeriodStart: now,
+        renewalDate: addMonths(now, 1),
+        tokensUsedThisPeriod: 0,
+        lowBalanceNotified: false,
+        renewalAttempts: 0,
+        nextRenewalAttemptAt: null,
+        pastDueSince: null,
+        lastRenewalError: '',
+      },
+    }
+  );
+
+  const profile = await BillingProfile.findOne({ business: req.businessId }).lean();
+  const biz = await Business.findById(req.businessId).select('name').lean();
+  void sendRenewalNoticeEmail({
+    kind: 'refunded',
+    userId: req.userId,
+    businessName: biz?.name,
+    amountMXN: total,
+    card: profile?.paymentMethod ? { brand: profile.paymentMethod.brand, last4: profile.paymentMethod.last4 } : null,
+    url: `${env.publicUrl.replace(/\/$/, '')}/dashboard/facturacion`,
+  });
+  void logAudit({
+    businessId: req.businessId,
+    userId: req.userId,
+    action: 'plan.guarantee_refund',
+    summary: `Usó la garantía de 30 días: reembolso de $${total} MXN y pasó a Free.`,
+    metadata: { refunded, totalMXN: total },
+  });
+  alertOps({ kind: 'billing', message: `Garantía usada: negocio ${req.businessId} reembolsó $${total} MXN.` });
+
+  res.json({
+    success: true,
+    message: `Listo: reembolsamos $${total.toLocaleString('es-MX')} MXN a tu tarjeta. Tu cuenta pasó al plan Free.`,
+    data: { refundedMXN: total },
   });
 });
 

@@ -18,6 +18,8 @@ const ownerOnly = [requireBusiness, requireBusinessRole('owner')];
 // si necesita negocio según el tipo (créditos sí, plan no necesariamente).
 router.post('/intent', requireAuth, ...ownerOnly, requireRecentAuth, validate(billing.createIntentSchema), billing.createIntent);
 router.post('/confirm', requireAuth, ...ownerOnly, validate(billing.confirmSchema), billing.confirmCheckout);
+// Monto exacto antes de pagar (mensual, anual o mejora proporcional).
+router.get('/quote', requireAuth, ...ownerOnly, billing.quotePlan);
 
 // Historial y estado: cualquier miembro del negocio puede ver.
 router.get('/payments', requireAuth, ...ownerOnly, billing.listPayments);
@@ -28,6 +30,8 @@ router.get('/payment-method', requireAuth, ...ownerOnly, billing.getPaymentMetho
 router.post('/cancel', requireAuth, ...ownerOnly, billing.cancelSubscription);
 router.post('/resume', requireAuth, ...ownerOnly, billing.resumeSubscription);
 router.post('/change-plan', requireAuth, ...ownerOnly, validate(billing.changePlanSchema), billing.changePlan);
+// Garantía de 30 días del plan anual: reembolso completo y pasa a Free (pide verificar identidad).
+router.post('/guarantee-refund', requireAuth, ...ownerOnly, requireRecentAuth, billing.guaranteeRefund);
 router.post('/setup-intent', requireAuth, ...ownerOnly, requireRecentAuth, billing.startSetupIntent);
 router.post(
   '/payment-method',

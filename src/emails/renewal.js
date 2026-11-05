@@ -6,13 +6,14 @@
  *  - downgraded:        terminó la gracia sin pago y la cuenta bajó a Free.
  *
  * @param {object} p
- * @param {'upcoming'|'upcoming_no_card'|'failed'|'downgraded'} p.kind
+ * @param {'upcoming'|'upcoming_no_card'|'failed'|'downgraded'|'refunded'} p.kind
  * @param {string} [p.customerName]
  * @param {string} [p.businessName]
  * @param {string} [p.planName]
  * @param {number} [p.amountMXN]
  * @param {{brand:string,last4:string}|null} [p.card]
  * @param {Date}   [p.date]       Fecha de renovación (upcoming).
+ * @param {'mensual'|'anual'} [p.cycle] Ciclo del cobro.
  * @param {Date}   [p.graceEnds]  Fin de la gracia (failed).
  * @param {string} [p.reason]     Motivo del fallo (failed).
  * @param {string} p.url          Enlace a Facturación.
@@ -25,7 +26,7 @@ export function renewalEmail(p) {
   const line = '#e2e8f0';
   const bg = '#f1f5f9';
 
-  const plan = escapeHtml(p.planName || 'de pago');
+  const plan = escapeHtml(p.planName || 'de pago') + (p.cycle === 'anual' ? ' anual' : '');
   const money = p.amountMXN != null ? `$${Number(p.amountMXN).toLocaleString('es-MX')} MXN` : '';
   const card = p.card?.last4 ? `${capitalize(p.card.brand)} terminación ${escapeHtml(p.card.last4)}` : '';
   const fmt = (d) =>
@@ -44,11 +45,13 @@ export function renewalEmail(p) {
   const variants = {
     upcoming: {
       tag: ['Renovación', '#ecfdf5', '#047857'],
-      subject: `Tu plan ${p.planName || ''} se renueva el ${fmt(p.date)}`.replace(/\s+/g, ' '),
+      subject: `Tu plan ${p.planName || ''}${p.cycle === 'anual' ? ' anual' : ''} se renueva el ${fmt(p.date)}`.replace(/\s+/g, ' '),
       title: `Tu plan ${plan} se renueva pronto`,
       body: `${greetName} el ${fmt(p.date)} renovaremos el plan ${plan}${biz} por <b>${money}</b>${
         card ? ` con tu ${card}` : ''
-      }. No tienes que hacer nada. Si prefieres cambiar de plan o cancelar, puedes hacerlo antes desde Facturación.`,
+      }${p.cycle === 'anual' ? ', que cubre los siguientes 12 meses' : ''}. No tienes que hacer nada. Si prefieres cambiar de plan${
+        p.cycle === 'anual' ? ', pasarte a mensual' : ''
+      } o cancelar, puedes hacerlo antes desde Facturación.`,
       cta: 'Ver mi plan',
     },
     upcoming_no_card: {
@@ -73,6 +76,15 @@ export function renewalEmail(p) {
       title: 'Tu cuenta pasó al plan Free',
       body: `${greetName} no pudimos cobrar la renovación del plan ${plan}${biz}, así que tu cuenta pasó al plan Free. Tu bot, tu entrenamiento y tus créditos comprados se conservan. Puedes volver a tu plan cuando quieras desde Facturación.`,
       cta: 'Volver a mi plan',
+    },
+    refunded: {
+      tag: ['Reembolso', '#ecfdf5', '#047857'],
+      subject: 'Procesamos el reembolso de tu plan anual',
+      title: 'Tu reembolso está en camino',
+      body: `${greetName} con la garantía de 30 días devolvimos <b>${money}</b> a tu ${
+        card || 'tarjeta'
+      }. Según tu banco, puede tardar de 5 a 10 días hábiles en verse en tu estado de cuenta. Tu cuenta${biz} pasó al plan Free y conserva tu bot y tu configuración.`,
+      cta: 'Ver mi cuenta',
     },
   };
   const v = variants[p.kind] || variants.upcoming;

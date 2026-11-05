@@ -1,12 +1,15 @@
 /**
- * Rol del equipo comercial de RenBotIA.
+ * Roles del equipo comercial de RenBotIA y de la agencia de marketing.
  *
  * "soporte": ve el Embudo (seguimiento de registros, notas, asignaciones). No ve
- * montos, inversión ni el resto del panel de admin. La persona debe crear antes
- * su cuenta normal en renbotia.com.
+ * montos, inversión ni el resto del panel de admin.
+ * "agencia": ve Campañas (resultados de Meta y Google por campaña, sin datos de
+ * personas), captura su inversión en pauta y descarga conversiones para Google Ads.
+ * La persona debe crear antes su cuenta normal en renbotia.com.
  *
  * Uso (Shell de Render, con MONGODB_URI en el entorno):
  *   node scripts/set-staff.mjs "correo@ejemplo.com" soporte   → le da el rol
+ *   node scripts/set-staff.mjs "correo@agencia.com" agencia   → acceso de la agencia
  *   node scripts/set-staff.mjs "correo@ejemplo.com" cliente   → se lo quita
  */
 import mongoose from 'mongoose';
@@ -21,7 +24,7 @@ function fail(msg) {
 
 if (!process.env.MONGODB_URI) fail('Falta MONGODB_URI en el entorno.');
 const role = String(roleArg || '').trim().toLowerCase();
-if (!emailArg || !['soporte', 'cliente'].includes(role)) fail('Uso: node scripts/set-staff.mjs "correo@ejemplo.com" soporte|cliente');
+if (!emailArg || !['soporte', 'agencia', 'cliente'].includes(role)) fail('Uso: node scripts/set-staff.mjs "correo@ejemplo.com" soporte|agencia|cliente');
 
 await mongoose.connect(process.env.MONGODB_URI);
 const user = await User.findOne({ email: emailArg.trim().toLowerCase() });

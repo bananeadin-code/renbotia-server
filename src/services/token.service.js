@@ -2,6 +2,7 @@ import { addMonths } from '../utils/dates.js';
 import { Plan } from '../models/Plan.js';
 import { Subscription } from '../models/Subscription.js';
 import { PLANS } from '../config/constants.js';
+import { insidePaidTerm } from './pricing.service.js';
 
 /**
  * Lógica de la billetera de tokens.
@@ -9,6 +10,20 @@ import { PLANS } from '../config/constants.js';
  * La `subscription` debe venir con `plan` poblado (populate('plan')) para poder
  * leer plan.monthlyTokenLimit.
  */
+
+/** Campos que se limpian cuando la suscripción deja el plan anual. */
+export const ANNUAL_RESET = {
+  billingCycle: 'mensual',
+  pendingCycle: '',
+  termStartedAt: null,
+  termEndsAt: null,
+  termPaidMXN: 0,
+  lockedPlanKey: '',
+  lockedAnnualMXN: 0,
+  founder: false,
+  guaranteeEndsAt: null,
+  guaranteePaymentIds: [],
+};
 
 /** ¿El plan `key` cuesta dinero? (Pro/Elite). */
 export function isPaidPlanKey(key) {
@@ -23,6 +38,14 @@ export function isPaidPlanKey(key) {
  *  - si no, el plan actual.
  */
 export function nextPeriodPlanKey(subscription) {
+  // Dentro del año pagado el plan sigue igual cada mes (aunque haya cancelado o
+  // programado un cambio: eso aplica al terminar el año).
+  if (insidePaidTerm(subscription)) return subscription.plan?.key || 'free';
+  return planKeyAfterTerm(subscription);
+}
+
+/** Plan con el que arranca el siguiente periodo DE COBRO (al terminar el año, en anual). */
+export function planKeyAfterTerm(subscription) {
   if (subscription.status === 'cancelada') return 'free';
   if (subscription.pendingPlanKey) return subscription.pendingPlanKey;
   return subscription.plan?.key || 'free';
@@ -46,15 +69,21 @@ export async function applyLazyReset(subscription) {
   const now = Date.now();
   if (subscription.renewalDate.getTime() > now) return subscription;
 
+  const inTerm = insidePaidTerm(subscription);
   const targetKey = nextPeriodPlanKey(subscription);
-  // De pago: lo renueva el cobrador (salvo cortesía, que se renueva aquí sin cobro).
-  if (isPaidPlanKey(targetKey) && !subscription.complimentary) return subscription;
+  // De pago: lo renueva el cobrador (salvo cortesía, que se renueva aquí sin
+  // cobro, y los meses dentro de un año ya pagado).
+  if (isPaidPlanKey(targetKey) && !subscription.complimentary && !inTerm) return subscription;
 
+  // En anual, los reinicios mensuales nunca pasan del fin del año pagado: ahí
+  // se detiene y el cobrador cobra el siguiente año.
+  const cap = inTerm ? subscription.termEndsAt.getTime() : Infinity;
   let periodStart = subscription.renewalDate;
   let renewal = subscription.renewalDate;
-  while (renewal.getTime() <= now) {
+  while (renewal.getTime() <= now && renewal.getTime() < cap) {
     periodStart = renewal;
     renewal = addMonths(renewal, 1);
+    if (renewal.getTime() > cap) renewal = new Date(cap);
   }
 
   let newPlan = null;
@@ -64,18 +93,31 @@ export async function applyLazyReset(subscription) {
 
   // Escritura condicionada a la fecha de renovación leída: si otro proceso ya
   // renovó este periodo, no se pisa.
-  const set = {
-    status: 'activa',
-    pendingPlanKey: '',
-    currentPeriodStart: periodStart,
-    renewalDate: renewal,
-    tokensUsedThisPeriod: 0,
-    lowBalanceNotified: false,
-    renewalAttempts: 0,
-    nextRenewalAttemptAt: null,
-    pastDueSince: null,
-    lastRenewalError: '',
-  };
+  // Dentro del año pagado solo se reinicia el cupo: se respetan la cancelación
+  // o el cambio programado, que aplican al terminar el año.
+  const set = inTerm
+    ? {
+        currentPeriodStart: periodStart,
+        renewalDate: renewal,
+        tokensUsedThisPeriod: 0,
+        lowBalanceNotified: false,
+      }
+    : {
+        status: 'activa',
+        pendingPlanKey: '',
+        currentPeriodStart: periodStart,
+        renewalDate: renewal,
+        tokensUsedThisPeriod: 0,
+        lowBalanceNotified: false,
+        renewalAttempts: 0,
+        nextRenewalAttemptAt: null,
+        pastDueSince: null,
+        lastRenewalError: '',
+      };
+  // Termina el año y pasa a Free: deja de ser anual (y pierde el precio de fundador).
+  if (!inTerm && !isPaidPlanKey(targetKey) && subscription.billingCycle === 'anual') {
+    Object.assign(set, ANNUAL_RESET);
+  }
   if (newPlan) set.plan = newPlan._id;
   await Subscription.updateOne(
     { _id: subscription._id, renewalDate: subscription.renewalDate },

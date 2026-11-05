@@ -7,6 +7,7 @@ import { MarketingSpend, SPEND_CHANNELS } from '../models/MarketingSpend.js';
 import { User } from '../models/User.js';
 import { ROLES } from '../config/constants.js';
 import { funnelRows, funnelSummary, sendWeeklyReport, CHANNEL_NAMES } from '../services/funnel.service.js';
+import { campaignReport, offlineConversionsCsv, PAID_CHANNELS } from '../services/campaigns.service.js';
 
 /** Rango ?from=AAAA-MM-DD&to=AAAA-MM-DD (por defecto, últimos 30 días). */
 function rangeOf(q) {
@@ -56,6 +57,8 @@ export const updateLeadSchema = z.object({
   phone: z.string().trim().max(30).optional(),
   nextFollowUpAt: z.string().max(40).nullable().optional(),
   lostReason: z.string().trim().max(300).optional(),
+  // true = la sesión de orientación por videollamada ya se dio.
+  orientationDone: z.boolean().optional(),
 });
 
 async function leadFor(userId) {
@@ -68,7 +71,8 @@ async function leadFor(userId) {
 /** PATCH /api/funnel/leads/:userId — etapa, responsable, teléfono, próximo seguimiento. */
 export const updateLead = asyncHandler(async (req, res) => {
   const lead = await leadFor(req.params.userId);
-  const { stage, assigneeId, phone, nextFollowUpAt, lostReason } = req.body;
+  const { stage, assigneeId, phone, nextFollowUpAt, lostReason, orientationDone } = req.body;
+  if (orientationDone !== undefined) lead.orientationAt = orientationDone ? lead.orientationAt || new Date() : null;
   if (stage !== undefined) {
     if (stage !== 'nuevo' && !lead.firstContactAt) lead.firstContactAt = new Date();
     lead.stage = stage;
@@ -126,6 +130,49 @@ export const putSpend = asyncHandler(async (req, res) => {
   const { month, channel, amountMXN, note } = req.body;
   await MarketingSpend.updateOne({ month, channel }, { $set: { amountMXN, note } }, { upsert: true });
   res.json({ success: true, data: { ok: true } });
+});
+
+/* ── Agencia de marketing (admin + agencia): solo cifras de pauta ─────────── */
+
+const isAgency = (req) => req.user?.role === ROLES.AGENCIA;
+
+/** GET /api/funnel/campaigns — resultados por campaña, canal y semana (sin datos personales). */
+export const getCampaigns = asyncHandler(async (req, res) => {
+  const report = await campaignReport(rangeOf(req.query));
+  res.json({ success: true, data: { report, channelNames: CHANNEL_NAMES } });
+});
+
+/** GET /api/funnel/campaign-spend — inversión en Meta y Google (últimos 12 meses). */
+export const getCampaignSpend = asyncHandler(async (req, res) => {
+  const spend = await MarketingSpend.find({ channel: { $in: PAID_CHANNELS } })
+    .sort({ month: -1, channel: 1 })
+    .limit(24)
+    .lean();
+  res.json({ success: true, data: { spend } });
+});
+
+export const campaignSpendSchema = spendSchema.extend({ channel: z.enum(PAID_CHANNELS) });
+
+/** PUT /api/funnel/campaign-spend — la agencia registra lo invertido en pauta (Meta / Google). */
+export const putCampaignSpend = asyncHandler(async (req, res) => {
+  const { month, channel, amountMXN, note } = req.body;
+  await MarketingSpend.updateOne(
+    { month, channel },
+    { $set: { amountMXN, note: note || (isAgency(req) ? 'Capturado por la agencia' : '') } },
+    { upsert: true }
+  );
+  res.json({ success: true, data: { ok: true } });
+});
+
+/** GET /api/funnel/offline-conversions.csv — archivo para "Cargas" de Google Ads. */
+export const getOfflineConversions = asyncHandler(async (req, res) => {
+  const { from, to } = rangeOf(req.query);
+  const { csv } = await offlineConversionsCsv({ from, to });
+  const day = (d) => d.toISOString().slice(0, 10);
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="conversiones-google-${day(from)}-a-${day(to)}.csv"`);
+  res.setHeader('Cache-Control', 'no-store');
+  res.send(csv);
 });
 
 /** POST /api/funnel/report — envía el reporte semanal ahora (prueba). */

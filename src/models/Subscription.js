@@ -56,6 +56,29 @@ const subscriptionSchema = new mongoose.Schema(
     // Cortesía (cuentas internas o de soporte): el plan se renueva cada mes SIN
     // cobro ni avisos de pago. Solo se activa por script (scripts/set-comp-plan.mjs).
     complimentary: { type: Boolean, default: false },
+
+    // ── Ciclo de cobro (ver services/pricing.service.js) ──
+    // anual: se cobra una vez al año (termEndsAt); renewalDate sigue marcando el
+    // reinicio MENSUAL del cupo, que dentro del año pagado no se cobra.
+    billingCycle: { type: String, enum: ['mensual', 'anual'], default: 'mensual' },
+    // Cambio de ciclo programado para el próximo cobro (p. ej. anual → mensual al terminar el año).
+    pendingCycle: { type: String, enum: ['', 'mensual', 'anual'], default: '' },
+    termStartedAt: { type: Date, default: null },
+    termEndsAt: { type: Date, default: null },
+    // Lo pagado por el año en curso (base del prorrateo al mejorar de plan).
+    termPaidMXN: { type: Number, default: 0 },
+    // Precio anual conservado al renovar el mismo plan.
+    lockedPlanKey: { type: String, default: '' },
+    lockedAnnualMXN: { type: Number, default: 0 },
+    // Contrató el anual con precio de fundador (lo conserva mientras renueve en anual).
+    founder: { type: Boolean, default: false },
+    // Garantía de 30 días de la primera compra anual: pagos que se reembolsarían.
+    guaranteeEndsAt: { type: Date, default: null },
+    guaranteePaymentIds: { type: [String], default: [] },
+    // Ya recibió la garantía alguna vez (no se repite en compras anuales posteriores).
+    annualGuaranteeGranted: { type: Boolean, default: false },
+    // Fecha del año para la que ya se envió el aviso de 15 días (anti-spam).
+    annualReminderFor: { type: Date, default: null },
   },
   { timestamps: true }
 );

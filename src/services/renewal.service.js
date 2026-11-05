@@ -10,7 +10,8 @@ import { env } from '../config/env.js';
 import { addMonths } from '../utils/dates.js';
 import { logger } from '../utils/logger.js';
 import { chargeOffSession, findSucceededIntent } from './stripe.service.js';
-import { applyLazyReset, isPaidPlanKey, nextPeriodPlanKey } from './token.service.js';
+import { applyLazyReset, isPaidPlanKey, nextPeriodPlanKey, planKeyAfterTerm, ANNUAL_RESET } from './token.service.js';
+import { insidePaidTerm, nextCycle, renewalPrice } from './pricing.service.js';
 import { sendPurchaseReceipt, sendRenewalNoticeEmail } from './email.service.js';
 import { logAudit } from './audit.service.js';
 
@@ -36,6 +37,8 @@ export const GRACE_DAYS = 3;
 const RETRY_HOURS = 24;
 const LOCK_MINUTES = 10;
 const REMINDER_DAYS = 3;
+// Plan anual: aviso adicional con más anticipación (es un cargo grande).
+const ANNUAL_REMINDER_DAYS = 15;
 const DAY = 24 * 3600 * 1000;
 
 const planInfo = (key) => PLANS.find((p) => p.key === key);
@@ -62,13 +65,16 @@ async function releaseLock(subId) {
  *
  * @returns {Promise<boolean>} true si este llamado abrió el periodo.
  */
-export async function finalizeRenewal({ subscriptionId, dueDate, planKey, paymentIntentId, amountMXN, userId }) {
+export async function finalizeRenewal({ subscriptionId, dueDate, planKey, paymentIntentId, amountMXN, userId, cycle = 'mensual' }) {
   const sub = await Subscription.findById(subscriptionId);
   if (!sub) return false;
   const plan = await Plan.findOne({ key: planKey });
   const info = planInfo(planKey);
   if (!plan || !info) throw new Error(`Plan inválido en renovación: ${planKey}`);
   const biz = await ownerOf(sub.business);
+  const annual = cycle === 'anual';
+  const label = `Renovación${annual ? ' anual' : ''} Plan ${info.name}`;
+  const charged = amountMXN ?? (annual ? renewalPrice(sub, planKey, 'anual') : info.priceMXN);
 
   // 1) Registro del pago (único por PaymentIntent).
   try {
@@ -77,9 +83,10 @@ export async function finalizeRenewal({ subscriptionId, dueDate, planKey, paymen
       business: sub.business,
       type: 'plan',
       renewal: true,
-      description: `Renovación Plan ${info.name}`,
-      amountMXN: amountMXN ?? info.priceMXN,
+      description: label,
+      amountMXN: charged,
       planKey,
+      cycle,
       stripeSessionId: `renewpi_${paymentIntentId}`,
     });
   } catch (err) {
@@ -91,8 +98,11 @@ export async function finalizeRenewal({ subscriptionId, dueDate, planKey, paymen
   const due = new Date(dueDate);
   const now = new Date();
   const start = now.getTime() - due.getTime() > (GRACE_DAYS + 1) * DAY ? now : due;
+  // Anual: el año se cobra completo; renewalDate sigue siendo el reinicio mensual del cupo.
+  const termEndsAt = annual ? addMonths(start, 12) : null;
   let next = addMonths(start, 1);
   while (next.getTime() <= now.getTime()) next = addMonths(next, 1);
+  if (termEndsAt && next > termEndsAt) next = termEndsAt;
 
   const res = await Subscription.updateOne(
     { _id: sub._id, renewalDate: due },
@@ -110,6 +120,21 @@ export async function finalizeRenewal({ subscriptionId, dueDate, planKey, paymen
         pastDueSince: null,
         lastRenewalError: '',
         renewalLockUntil: null,
+        ...(annual
+          ? {
+              billingCycle: 'anual',
+              pendingCycle: '',
+              termStartedAt: start,
+              termEndsAt,
+              termPaidMXN: charged,
+              // Conserva el precio con el que renovó este plan.
+              lockedPlanKey: planKey,
+              lockedAnnualMXN: charged,
+              // La garantía es solo de la primera compra anual.
+              guaranteeEndsAt: null,
+              guaranteePaymentIds: [],
+            }
+          : ANNUAL_RESET),
       },
     }
   );
@@ -119,16 +144,19 @@ export async function finalizeRenewal({ subscriptionId, dueDate, planKey, paymen
     userId: userId || biz?.owner,
     businessName: biz?.name,
     type: 'plan',
-    description: `Renovación Plan ${info.name}`,
-    amountMXN: amountMXN ?? info.priceMXN,
+    description: label,
+    amountMXN: charged,
     reference: paymentIntentId,
+    notes: annual
+      ? [{ text: `Tu plan anual cubre hasta el ${fmtDate(termEndsAt)}. Tus créditos de IA se renuevan cada mes.` }]
+      : [],
   });
   void logAudit({
     businessId: sub.business,
     userId: userId || biz?.owner,
     action: 'plan.renew',
-    summary: `Se renovó el plan ${info.name}.`,
-    metadata: { planKey, amountMXN: amountMXN ?? info.priceMXN },
+    summary: `Se renovó el plan ${info.name}${annual ? ' (anual)' : ''}.`,
+    metadata: { planKey, amountMXN: charged, cycle },
   });
   logger.info(`Renovación OK: plan ${planKey} para negocio ${sub.business}`);
   return true;
@@ -156,6 +184,7 @@ async function downgradeToFree(sub, reason) {
         pastDueSince: null,
         lastRenewalError: reason || '',
         renewalLockUntil: null,
+        ...ANNUAL_RESET,
       },
     }
   );
@@ -207,14 +236,16 @@ async function markFailed(sub, reason, card) {
   // Aviso por correo solo en el PRIMER fallo (no en cada reintento).
   if (firstFailure) {
     const biz = await ownerOf(sub.business);
-    const info = planInfo(nextPeriodPlanKey(sub));
+    const key = nextPeriodPlanKey(sub);
+    const info = planInfo(key);
     void sendRenewalNoticeEmail({
       kind: 'failed',
       reason,
       userId: biz?.owner,
       businessName: biz?.name,
       planName: info?.name,
-      amountMXN: info?.priceMXN,
+      amountMXN: renewalPrice(sub, key, nextCycle(sub)),
+      cycle: nextCycle(sub),
       card,
       graceEnds,
       url: billingUrl(),
@@ -243,13 +274,16 @@ export async function renewSubscription(subId, now = new Date()) {
   try {
     const targetKey = nextPeriodPlanKey(sub);
 
-    // Periodo gratis (Free, cancelado, fin del regalo) o cortesía: sin cobro.
-    if (!isPaidPlanKey(targetKey) || sub.complimentary) {
+    // Periodo gratis (Free, cancelado, fin del regalo), cortesía o un mes dentro
+    // del año ya pagado: sin cobro, solo se reinicia el cupo.
+    if (!isPaidPlanKey(targetKey) || sub.complimentary || insidePaidTerm(sub)) {
       await applyLazyReset(sub);
       return 'free';
     }
 
     const info = planInfo(targetKey);
+    const cycle = nextCycle(sub);
+    const amountMXN = renewalPrice(sub, targetKey, cycle, now);
     const dueDate = sub.renewalDate;
     const renewalKey = renewalKeyFor(sub, dueDate);
     const biz = await ownerOf(sub.business);
@@ -271,6 +305,7 @@ export async function renewSubscription(subId, now = new Date()) {
           paymentIntentId: paid.id,
           amountMXN: paid.amount / 100,
           userId: biz?.owner,
+          cycle: paid.metadata?.cycle || cycle,
         });
         return 'renewed';
       }
@@ -293,10 +328,11 @@ export async function renewSubscription(subId, now = new Date()) {
       pi = await chargeOffSession({
         customerId: profile.stripeCustomerId,
         paymentMethodId: profile.paymentMethod.id,
-        amountMXN: info.priceMXN,
-        description: `Renovación Plan ${info.name} — RenBotIA`,
+        amountMXN,
+        description: `Renovación${cycle === 'anual' ? ' anual' : ''} Plan ${info.name} — RenBotIA`,
         metadata: {
           type: 'renewal',
+          cycle,
           renewalKey,
           subscriptionId: String(sub._id),
           businessId: String(sub.business),
@@ -322,8 +358,9 @@ export async function renewSubscription(subId, now = new Date()) {
       dueDate,
       planKey: targetKey,
       paymentIntentId: pi.id,
-      amountMXN: info.priceMXN,
+      amountMXN,
       userId: biz?.owner,
+      cycle,
     });
     return 'renewed';
   } finally {
@@ -347,7 +384,8 @@ async function sendUpcomingReminders(now) {
   let sent = 0;
   for (const sub of subs) {
     const targetKey = nextPeriodPlanKey(sub);
-    if (!isPaidPlanKey(targetKey) || sub.complimentary) continue;
+    // Los reinicios mensuales dentro del año pagado no se cobran: no hay aviso.
+    if (!isPaidPlanKey(targetKey) || sub.complimentary || insidePaidTerm(sub)) continue;
     if (sub.renewalReminderFor && sub.renewalReminderFor.getTime() === sub.renewalDate.getTime()) continue;
 
     // Marca primero (atómico) para no enviar dos veces en paralelo.
@@ -362,20 +400,72 @@ async function sendUpcomingReminders(now) {
       BillingProfile.findOne({ business: sub.business }).lean(),
     ]);
     const info = planInfo(targetKey);
+    const cycle = nextCycle(sub);
     void sendRenewalNoticeEmail({
       kind: profile?.paymentMethod?.id ? 'upcoming' : 'upcoming_no_card',
       userId: biz?.owner,
       businessName: biz?.name,
       planName: info?.name,
-      amountMXN: info?.priceMXN,
+      amountMXN: renewalPrice(sub, targetKey, cycle, now),
+      cycle,
       card: profile?.paymentMethod ? { brand: profile.paymentMethod.brand, last4: profile.paymentMethod.last4 } : null,
       date: sub.renewalDate,
       url: billingUrl(),
     });
     sent += 1;
   }
+  return sent + (await sendAnnualReminders(now));
+}
+
+/**
+ * Plan anual: aviso ANNUAL_REMINDER_DAYS antes de cobrar el siguiente año (además
+ * del aviso de 3 días). Solo si se va a cobrar (no cancelado ni pasa a Free).
+ */
+async function sendAnnualReminders(now) {
+  const soon = new Date(now.getTime() + ANNUAL_REMINDER_DAYS * DAY);
+  const subs = await Subscription.find({
+    billingCycle: 'anual',
+    termEndsAt: { $gt: new Date(now.getTime() + REMINDER_DAYS * DAY), $lte: soon },
+    status: { $ne: 'cancelada' },
+    complimentary: { $ne: true },
+  })
+    .populate('plan')
+    .limit(200);
+
+  let sent = 0;
+  for (const sub of subs) {
+    if (sub.annualReminderFor && sub.annualReminderFor.getTime() === sub.termEndsAt.getTime()) continue;
+    // Plan y ciclo con los que arrancará el siguiente cobro (al terminar el año).
+    const targetKey = planKeyAfterTerm(sub);
+    if (!isPaidPlanKey(targetKey)) continue;
+    const cycle = sub.pendingCycle || 'anual';
+    const claimed = await Subscription.updateOne(
+      { _id: sub._id, annualReminderFor: { $ne: sub.termEndsAt } },
+      { $set: { annualReminderFor: sub.termEndsAt } }
+    );
+    if (!claimed.modifiedCount) continue;
+    const [biz, profile] = await Promise.all([
+      ownerOf(sub.business),
+      BillingProfile.findOne({ business: sub.business }).lean(),
+    ]);
+    void sendRenewalNoticeEmail({
+      kind: profile?.paymentMethod?.id ? 'upcoming' : 'upcoming_no_card',
+      userId: biz?.owner,
+      businessName: biz?.name,
+      planName: planInfo(targetKey)?.name,
+      amountMXN: renewalPrice(sub, targetKey, cycle, now),
+      cycle,
+      card: profile?.paymentMethod ? { brand: profile.paymentMethod.brand, last4: profile.paymentMethod.last4 } : null,
+      date: sub.termEndsAt,
+      url: billingUrl(),
+    });
+    sent += 1;
+  }
   return sent;
 }
+
+const fmtDate = (d) =>
+  new Date(d).toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'America/Mexico_City' });
 
 let running = false;
 

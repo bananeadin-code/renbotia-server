@@ -8,7 +8,16 @@ import { Payment } from '../models/Payment.js';
 import { ApiError } from '../utils/ApiError.js';
 import { addMonths } from '../utils/dates.js';
 import { logger } from '../utils/logger.js';
-import { addExtraTokens } from './token.service.js';
+import { addExtraTokens, ANNUAL_RESET } from './token.service.js';
+import { env } from '../config/env.js';
+import {
+  annualPriceFor,
+  isFounderWindow,
+  hasActiveAnnual,
+  guaranteeActive,
+  guaranteeEndsFrom,
+  orientationIncluded,
+} from './pricing.service.js';
 import { finalizeRenewal } from './renewal.service.js';
 import { sendPurchaseReceipt } from './email.service.js';
 import { logAudit } from './audit.service.js';
@@ -62,8 +71,115 @@ export async function upgradeSubscriptionPlan(businessId, planKey) {
   sub.nextRenewalAttemptAt = null;
   sub.pastDueSince = null;
   sub.lastRenewalError = '';
+  // Plan mensual: deja de ser anual (solo se compra mensual sin un año vigente).
+  Object.assign(sub, ANNUAL_RESET);
   await sub.save();
   return sub;
+}
+
+/**
+ * Compra anual pagada.
+ *  - mode 'annual': empieza un año. Si ya pagaba ese MISMO plan mensual y su mes
+ *    sigue vigente, el año arranca cuando termina ese mes (no pierde días
+ *    pagados); si no, arranca hoy con cupo nuevo.
+ *  - mode 'annual_upgrade': mejora de plan a mitad del año (se cobró solo la
+ *    diferencia proporcional). Cambia el plan al instante y el año no se mueve.
+ * La garantía de 30 días se otorga solo en la PRIMERA compra anual del negocio.
+ */
+export async function applyAnnualPurchase(businessId, { planKey, mode, amountMXN, paymentIntentId, annualStart, newAnnualMXN, paidAt }) {
+  const plan = await Plan.findOne({ key: planKey, isActive: true });
+  if (!plan) throw ApiError.badRequest(`Plan inválido: ${planKey}`);
+  const sub = await Subscription.findOne({ business: businessId });
+  if (!sub) throw ApiError.notFound('No hay suscripción para este negocio');
+  const now = new Date();
+  const founder = Boolean(sub.founder) || isFounderWindow(paidAt || now);
+
+  const reset = () => {
+    sub.status = 'activa';
+    sub.pendingPlanKey = '';
+    sub.pendingCycle = '';
+    sub.renewalAttempts = 0;
+    sub.nextRenewalAttemptAt = null;
+    sub.pastDueSince = null;
+    sub.lastRenewalError = '';
+  };
+
+  if (mode === 'annual_upgrade') {
+    if (!hasActiveAnnual(sub, now)) {
+      // El año terminó entre el cobro y la entrega (muy raro): se aplica el plan
+      // y se avisa a operaciones para revisar el monto a mano.
+      alertOps({ kind: 'billing', message: `Mejora anual ${paymentIntentId} sin año vigente; revisar.` });
+    }
+    sub.plan = plan._id;
+    sub.tokensUsedThisPeriod = 0;
+    sub.lowBalanceNotified = false;
+    reset();
+    const annual = newAnnualMXN || annualPriceFor(sub, planKey, paidAt || now);
+    sub.termPaidMXN = annual;
+    sub.lockedPlanKey = planKey;
+    sub.lockedAnnualMXN = annual;
+    sub.founder = founder;
+    if (guaranteeActive(sub, now)) sub.guaranteePaymentIds = [...(sub.guaranteePaymentIds || []), paymentIntentId];
+    await sub.save();
+    return sub;
+  }
+
+  // Año nuevo. ¿Conserva los días del mes ya pagado del mismo plan?
+  const keep =
+    annualStart > now.getTime() &&
+    String(sub.plan) === String(plan._id) &&
+    sub.renewalDate?.getTime() === annualStart;
+  const start = keep ? new Date(annualStart) : now;
+  if (!keep) {
+    sub.plan = plan._id;
+    sub.currentPeriodStart = now;
+    sub.renewalDate = addMonths(now, 1);
+    sub.tokensUsedThisPeriod = 0;
+    sub.lowBalanceNotified = false;
+  }
+  reset();
+  sub.billingCycle = 'anual';
+  sub.termStartedAt = start;
+  sub.termEndsAt = addMonths(start, 12);
+  sub.termPaidMXN = amountMXN;
+  sub.lockedPlanKey = planKey;
+  sub.lockedAnnualMXN = amountMXN;
+  sub.founder = founder;
+  if (!sub.annualGuaranteeGranted) {
+    sub.annualGuaranteeGranted = true;
+    sub.guaranteeEndsAt = guaranteeEndsFrom(now);
+    sub.guaranteePaymentIds = [paymentIntentId];
+  } else {
+    sub.guaranteeEndsAt = null;
+    sub.guaranteePaymentIds = [];
+  }
+  await sub.save();
+  return sub;
+}
+
+const fmtDate = (d) =>
+  new Date(d).toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'America/Mexico_City' });
+
+/** Notas del comprobante: vigencia del año, garantía y sesión de orientación. */
+function receiptNotes(sub) {
+  const notes = [];
+  if (!sub) return notes;
+  if (sub.billingCycle === 'anual' && sub.termEndsAt) {
+    notes.push({ text: `Tu plan anual cubre hasta el ${fmtDate(sub.termEndsAt)}. Tus créditos de IA se renuevan cada mes.` });
+  }
+  if (sub.guaranteeEndsAt && sub.guaranteeEndsAt > new Date()) {
+    notes.push({
+      text: `Tienes garantía de 30 días: si RenBotIA no te funciona, pide el reembolso completo desde Facturación antes del ${fmtDate(sub.guaranteeEndsAt)}.`,
+    });
+  }
+  if (orientationIncluded(sub) && env.funnel.bookingUrl) {
+    notes.push({
+      text: 'Incluye una sesión de orientación por videollamada para dejar tu bot funcionando.',
+      href: env.funnel.bookingUrl,
+      linkText: 'Agenda tu sesión',
+    });
+  }
+  return notes;
 }
 
 /**
@@ -83,18 +199,37 @@ export async function fulfillPaymentIntent(pi) {
   if (m.type === 'plan') {
     const plan = findPlan(m.planKey);
     if (!plan) return { applied: false, reason: 'plan_invalido' };
+    const cycle = m.cycle === 'anual' ? 'anual' : 'mensual';
+    const mode = cycle === 'anual' ? (m.mode === 'annual_upgrade' ? 'annual_upgrade' : 'annual') : 'monthly';
+    const description =
+      mode === 'annual_upgrade'
+        ? `Mejora a Plan ${plan.name} anual (proporcional)`
+        : `Plan ${plan.name}${cycle === 'anual' ? ' anual' : ''}`;
     const claim = await claimPayment({
       user: m.userId,
       business: business._id,
       type: 'plan',
-      description: `Plan ${plan.name}`,
+      description,
       amountMXN,
       planKey: plan.key,
+      cycle,
       stripeSessionId: pi.id,
     });
     if (!claim) return { applied: false, alreadyProcessed: true, type: 'plan', upgraded: true };
+    let sub;
     try {
-      await upgradeSubscriptionPlan(business._id, plan.key);
+      sub =
+        mode === 'monthly'
+          ? await upgradeSubscriptionPlan(business._id, plan.key)
+          : await applyAnnualPurchase(business._id, {
+              planKey: plan.key,
+              mode,
+              amountMXN,
+              paymentIntentId: pi.id,
+              annualStart: Number(m.annualStart) || 0,
+              newAnnualMXN: Number(m.newAnnualMXN) || 0,
+              paidAt: pi.created ? new Date(pi.created * 1000) : new Date(),
+            });
     } catch (err) {
       await Payment.deleteOne({ _id: claim._id }); // libera para reintentar
       throw err;
@@ -103,10 +238,18 @@ export async function fulfillPaymentIntent(pi) {
       businessId: business._id,
       userId: m.userId,
       action: 'plan.upgrade',
-      summary: `Mejoró al plan ${plan.name}.`,
-      metadata: { planKey: plan.key, amountMXN },
+      summary: `${description}.`,
+      metadata: { planKey: plan.key, amountMXN, cycle, mode },
     });
-    void sendPurchaseReceipt({ userId: m.userId, businessName: business.name, type: 'plan', description: `Plan ${plan.name}`, amountMXN, reference: pi.id });
+    void sendPurchaseReceipt({
+      userId: m.userId,
+      businessName: business.name,
+      type: 'plan',
+      description,
+      amountMXN,
+      reference: pi.id,
+      notes: receiptNotes(sub),
+    });
     void qualifyReferral(m.userId);
     void onPurchase(claim); // embudo: conversión de compra
     return { applied: true, type: 'plan', upgraded: true };
@@ -167,6 +310,7 @@ export async function fulfillPaymentIntent(pi) {
     paymentIntentId: pi.id,
     amountMXN,
     userId: m.userId,
+    cycle: m.cycle === 'anual' ? 'anual' : 'mensual',
   });
   await Subscription.updateOne({ _id: sub._id }, { $set: { renewalLockUntil: null } });
   return { applied: Boolean(opened), alreadyProcessed: !opened, type: 'renewal', renewed: true };

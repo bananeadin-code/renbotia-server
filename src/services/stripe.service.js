@@ -228,5 +228,25 @@ export async function findSucceededIntent({ customerId, key, value, sinceDate })
   if (sinceDate) params.created = { gte: Math.floor(new Date(sinceDate).getTime() / 1000) };
   const list = await getStripe().paymentIntents.list(params);
   const pi = list.data.find((p) => p.status === 'succeeded' && p.metadata?.[key] === value);
-  return pi ? { id: pi.id, amount: pi.amount } : null;
+  return pi ? { id: pi.id, amount: pi.amount, metadata: pi.metadata || {} } : null;
+}
+
+/**
+ * Reembolso completo de un cobro (garantía de 30 días del plan anual). Con clave
+ * de idempotencia: repetir la petición no devuelve el dinero dos veces.
+ * @returns {Promise<{ id: string, status: string, amount: number }>}
+ */
+let refundHook = null;
+/** Solo pruebas: simula el reembolso sin llamar a Stripe. */
+export function __setRefundHook(fn) {
+  refundHook = fn || null;
+}
+
+export async function createRefund({ paymentIntentId, metadata, idempotencyKey }) {
+  if (refundHook) return refundHook({ paymentIntentId, metadata, idempotencyKey });
+  const r = await getStripe().refunds.create(
+    { payment_intent: paymentIntentId, reason: 'requested_by_customer', metadata },
+    idempotencyKey ? { idempotencyKey } : undefined
+  );
+  return { id: r.id, status: r.status, amount: r.amount };
 }

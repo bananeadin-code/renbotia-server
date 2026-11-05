@@ -59,6 +59,33 @@ export const PLANS = [
 ];
 
 /**
+ * Plan anual (Pro y Elite). Se cobra una vez al año; el cupo de tokens se sigue
+ * renovando cada mes.
+ *  - Precio de fundador: pagas 9 meses y recibes 12, para quien lo contrate antes
+ *    de `founderUntil` (fin del 31-ene-2027, hora de México). Mientras siga
+ *    renovando en anual, conserva ese precio.
+ *  - Después: pagas 10 meses y recibes 12.
+ *  - Garantía: reembolso completo dentro de `guaranteeDays` desde la PRIMERA
+ *    compra anual del negocio (no aplica a renovaciones).
+ * FOUNDER_UNTIL / ORIENTATION_FREE_UNTIL en el entorno permiten mover las fechas
+ * sin desplegar código.
+ */
+export const ANNUAL = {
+  founderMonthsPaid: 9,
+  standardMonthsPaid: 10,
+  founderUntil: '2027-02-01T06:00:00.000Z',
+  guaranteeDays: 30,
+};
+
+/**
+ * Sesión de orientación por videollamada (configuración asistida): gratis para
+ * todos durante el lanzamiento y siempre incluida en el plan anual.
+ */
+export const ORIENTATION = {
+  freeUntil: '2027-02-01T06:00:00.000Z',
+};
+
+/**
  * Canales que de verdad se pueden conectar hoy. Los beneficios de PLANS usan
  * {channels} / {channels_or} y se completan al servir la lista: así no se
  * anuncia Messenger o Instagram antes de que Meta los apruebe (y aparecen solos
@@ -253,6 +280,8 @@ export const ROLES = {
   ADMIN: 'admin',
   // Equipo comercial de RenBotIA: ve el embudo/CRM, no el resto del admin.
   SOPORTE: 'soporte',
+  // Agencia de marketing: solo cifras de campañas pagadas (sin datos de personas).
+  AGENCIA: 'agencia',
 };
 
 export const BUSINESS_STATUS = {

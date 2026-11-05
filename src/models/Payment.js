@@ -17,10 +17,15 @@ const paymentSchema = new mongoose.Schema(
     tokens: { type: Number, default: 0 }, // solo para compras de créditos
     planKey: { type: String, default: '' },
     packKey: { type: String, default: '' },
-    // true = renovación mensual cobrada a la tarjeta guardada.
+    // true = renovación cobrada a la tarjeta guardada.
     renewal: { type: Boolean, default: false },
+    // Ciclo del plan pagado (solo type 'plan').
+    cycle: { type: String, enum: ['', 'mensual', 'anual'], default: '' },
     stripeSessionId: { type: String, required: true, unique: true },
-    status: { type: String, enum: ['completed'], default: 'completed' },
+    // refunded = devuelto (garantía de 30 días del plan anual). No cuenta como ingreso.
+    status: { type: String, enum: ['completed', 'refunded'], default: 'completed' },
+    refundedAt: { type: Date, default: null },
+    refundId: { type: String, default: '' },
   },
   { timestamps: true }
 );

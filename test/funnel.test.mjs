@@ -85,6 +85,14 @@ describe('Embudo comercial', () => {
     assert.equal(lead.stage, 'contactado');
     assert.ok(lead.firstContactAt);
 
+    // Sesión de orientación: el equipo la marca y el cliente deja de ver la invitación.
+    const TT = await tokenFor(target.user);
+    const ori = async () => (await call('GET', '/subscription/me', TT))[1].data.subscription.orientation;
+    assert.equal((await ori()).done, false);
+    assert.equal((await call('PATCH', `/funnel/leads/${target.user._id}`, TS, { orientationDone: true }))[0], 200);
+    assert.ok((await Lead.findOne({ user: target.user._id })).orientationAt);
+    assert.equal((await ori()).done, true);
+
     const cliente = await makeOwner('Cliente');
     assert.equal((await call('GET', '/funnel/leads', await tokenFor(cliente.user)))[0], 403);
     // No se puede asignar a alguien fuera del equipo.
