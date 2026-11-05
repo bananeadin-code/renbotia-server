@@ -1,3 +1,4 @@
+import { connectNudgeEmail } from '../emails/connectNudge.js';
 import mongoose from 'mongoose';
 import { User } from '../models/User.js';
 import { Business } from '../models/Business.js';
@@ -341,6 +342,48 @@ function escapeHtml(s = '') {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+const HOUR = 36e5;
+/** Momento de cada aviso (desde el registro): 3 h y 48 h. */
+const NUDGE_AFTER = [3 * HOUR, 48 * HOUR];
+
+/**
+ * Ayuda automática a quien se registró y no conectó un canal (máx. 2 correos).
+ * Solo registros de los últimos 7 días; nunca a quien ya pagó o el equipo marcó
+ * como ganado o perdido.
+ */
+export async function sendConnectNudges(now = new Date()) {
+  if (!env.funnel.nudgesEnabled) return { skipped: 'disabled' };
+  const rows = await funnelRows({ from: new Date(now.getTime() - 7 * 24 * HOUR), to: now, limit: 1000 });
+  const base = env.publicUrl.replace(/\/$/, '');
+  let sent = 0;
+  for (const r of rows) {
+    if (!['verificado', 'negocio'].includes(r.autoStage)) continue;
+    if (['ganado', 'perdido'].includes(r.lead?.stage)) continue;
+    const n = r.lead ? await Lead.findById(r.lead.id).select('nudgesSent').lean() : null;
+    const count = n?.nudgesSent || 0;
+    if (count >= NUDGE_AFTER.length) continue;
+    if (now - new Date(r.createdAt) < NUDGE_AFTER[count]) continue;
+    // Reclamo atómico: un solo envío por aviso aunque haya dos procesos.
+    const claim = await Lead.updateOne(
+      { user: r.userId, nudgesSent: count },
+      { $set: { nudgesSent: count + 1, lastNudgeAt: now }, $setOnInsert: { stage: 'nuevo' } },
+      { upsert: !r.lead }
+    );
+    if (!claim.modifiedCount && !claim.upsertedCount) continue;
+    const { subject, html } = connectNudgeEmail({
+      name: r.name,
+      step: r.autoStage,
+      second: count === 1,
+      bookingUrl: env.funnel.bookingUrl || `${base}/contacto`,
+      connectUrl: `${base}/dashboard/conexiones`,
+      onboardingUrl: `${base}/onboarding`,
+    });
+    await sendEmail({ to: r.email, subject, html });
+    sent += 1;
+  }
+  return { sent };
+}
+
 /** Programador: revisa cada 15 min si toca el resumen diario o el reporte del lunes. */
 export function startFunnelScheduler() {
   if (process.env.FUNNEL_REPORTS_ENABLED === 'false') return;
@@ -350,6 +393,8 @@ export function startFunnelScheduler() {
     try {
       if (hour >= 9 && (await claimRun(`funnel_daily_${ymd}`))) await track(sendDailyDigest());
       if (weekday === 'Mon' && hour >= 8 && (await claimRun(`funnel_weekly_${ymd}`))) await track(sendWeeklyReport());
+      // Ayuda para conectar: solo en horario razonable (8 a 21 h de México).
+      if (hour >= 8 && hour < 21) await track(sendConnectNudges());
     } catch (err) {
       logger.warn(`Embudo: reportes: ${err.message}`);
     }

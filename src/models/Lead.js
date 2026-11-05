@@ -28,6 +28,9 @@ const leadSchema = new mongoose.Schema(
     notes: { type: [noteSchema], default: [] },
     // Primer contacto del equipo (para medir qué tan rápido se atiende).
     firstContactAt: { type: Date, default: null },
+    // Correos automáticos de ayuda para conectar un canal (máximo 2).
+    nudgesSent: { type: Number, default: 0 },
+    lastNudgeAt: { type: Date, default: null },
   },
   { timestamps: true }
 );

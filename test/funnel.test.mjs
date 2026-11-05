@@ -92,6 +92,24 @@ describe('Embudo comercial', () => {
     assert.equal(sb, 400);
   });
 
+  it('correos de ayuda para conectar: a las 3 h y a las 48 h, máximo 2, nunca a quien conectó', async () => {
+    const H = 36e5;
+    const stuck = await makeOwner('Atorado');
+    const done = await makeOwner('Conectado');
+    const t0 = Date.now() - 4 * H;
+    await User.collection.updateMany({ _id: { $in: [stuck.user._id, done.user._id] } }, { $set: { createdAt: new Date(t0) } });
+    await Business.updateOne({ _id: done.business._id }, { $set: { whatsappPhoneNumberId: 'PN-NUDGE' } });
+    const nudges = async (at) => {
+      await funnel.sendConnectNudges(new Date(at));
+      return (await Lead.findOne({ user: stuck.user._id }).lean())?.nudgesSent || 0;
+    };
+    assert.equal(await nudges(Date.now()), 1, 'primer aviso a las 3 h');
+    assert.equal(await nudges(Date.now()), 1, 'no se repite de inmediato');
+    assert.equal(await nudges(t0 + 49 * H), 2, 'segundo aviso a las 48 h');
+    assert.equal(await nudges(t0 + 6 * 24 * H), 2, 'nunca más de 2');
+    assert.equal((await Lead.findOne({ user: done.user._id }).lean())?.nudgesSent || 0, 0, 'a quien conectó no se le escribe');
+  });
+
   it('API de Conversiones: solo con consentimiento y con el mismo event_id', async () => {
     const { env } = await import('../src/config/env.js');
     const sent = [];

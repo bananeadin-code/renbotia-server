@@ -126,6 +126,10 @@ export const env = {
   funnel: {
     alertEmails: (process.env.SALES_ALERT_EMAILS || '').split(',').map((s) => s.trim()).filter(Boolean),
     reportEmails: (process.env.FUNNEL_REPORT_EMAILS || '').split(',').map((s) => s.trim()).filter(Boolean),
+    // Enlace para agendar la conexión asistida (Calendly, Google Calendar…). Sin él, /contacto.
+    bookingUrl: process.env.SUPPORT_BOOKING_URL || '',
+    // Correos de ayuda a quien no conectó un canal (CONNECT_NUDGES_ENABLED=false los apaga).
+    nudgesEnabled: process.env.CONNECT_NUDGES_ENABLED !== 'false',
   },
 
   // Facebook Messenger (Fase 3 multicanal). Usa la MISMA app de Meta que WhatsApp
