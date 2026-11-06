@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiError } from '../utils/ApiError.js';
-import { PLANS, CREDIT_PACKS } from '../config/constants.js';
+import { PLANS, CREDIT_PACKS, CANCEL_REASONS } from '../config/constants.js';
+import { recordCancellation } from '../services/retention.service.js';
 import { env } from '../config/env.js';
 import {
   createPaymentIntent,
@@ -312,19 +313,29 @@ const CARD_FOR_RENEWAL = () =>
  * pero el negocio conserva su tiempo y tokens hasta la fecha de renovación.
  * Al llegar esa fecha, baja automáticamente a Free (ver applyLazyReset).
  */
+export const cancelSchema = z.object({
+  reason: z.enum(Object.keys(CANCEL_REASONS)).optional(),
+  comment: z.string().trim().max(500).optional().default(''),
+});
+
 export const cancelSubscription = asyncHandler(async (req, res) => {
   const sub = await loadSub(req.businessId);
   sub.status = 'cancelada';
   sub.pendingPlanKey = ''; // una cancelación descarta un cambio programado
   sub.pendingCycle = '';
+  sub.cancelReason = req.body?.reason || '';
+  sub.cancelComment = req.body?.comment || '';
+  sub.canceledAt = new Date();
   await sub.save();
   // En anual conserva el plan hasta que termina el año pagado.
   const until = hasActiveAnnual(sub) ? sub.termEndsAt : sub.renewalDate;
+  // CRM + aviso al equipo para intentar salvar al cliente (no bloquea la cancelación).
+  void recordCancellation({ sub, userId: req.userId, reason: sub.cancelReason, comment: sub.cancelComment, accessUntil: until });
   void logAudit({
     businessId: req.businessId,
     userId: req.userId,
     action: 'plan.cancel',
-    summary: 'Canceló la renovación del plan.',
+    summary: `Canceló la renovación del plan${sub.cancelReason ? ` (${CANCEL_REASONS[sub.cancelReason]})` : ''}.`,
   });
   res.json({
     success: true,
@@ -347,6 +358,7 @@ export const resumeSubscription = asyncHandler(async (req, res) => {
   const resumeKey = sub.pendingPlanKey || sub.plan?.key;
   if (isPaidPlanKey(resumeKey) && !(await hasSavedCard(req.businessId))) throw CARD_FOR_RENEWAL();
   sub.status = 'activa';
+  sub.canceledAt = null;
   await sub.save();
   void logAudit({
     businessId: req.businessId,

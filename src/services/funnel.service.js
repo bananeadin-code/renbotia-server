@@ -14,6 +14,7 @@ import { sendMetaEvent } from './conversions.service.js';
 import { newLeadEmail } from '../emails/newLead.js';
 import { funnelReportEmail } from '../emails/funnelReport.js';
 import { track, isClosing } from '../utils/inflight.js';
+import { sendAnnualOffers, sendCardExpiryNotices, inactivePayingCustomers, lastActivityByBusiness } from './retention.service.js';
 
 /**
  * Embudo comercial: de dónde llega cada registro, en qué etapa va y cuánto cuesta
@@ -166,10 +167,12 @@ export async function funnelRows({ from, to, limit = 5000 } = {}) {
     Lead.find({ user: { $in: ids } }).populate('assignee', 'name email').lean(),
   ]);
   const subs = await Subscription.find({ business: { $in: businesses.map((b) => b._id) } })
-    .select('business plan complimentary billingCycle')
+    .select('business plan complimentary billingCycle status cancelReason canceledAt')
     .populate('plan', 'key')
     .lean();
 
+  // Última conversación real por negocio (para detectar clientes que pagan y no usan el bot).
+  const lastActivity = await lastActivityByBusiness(businesses.map((b) => b._id)).catch(() => new Map());
   const bizByOwner = new Map(businesses.map((b) => [String(b.owner), b]));
   const subByBiz = new Map(subs.map((s) => [String(s.business), s]));
   const payByUser = new Map(payments.map((p) => [String(p._id), p]));
@@ -204,6 +207,8 @@ export async function funnelRows({ from, to, limit = 5000 } = {}) {
       channels,
       planKey,
       cycle: sub?.billingCycle || 'mensual',
+      lastActivityAt: b ? lastActivity.get(String(b._id)) || null : null,
+      canceled: sub?.status === 'cancelada' ? { reason: sub.cancelReason || '', at: sub.canceledAt || null } : null,
       complimentary: Boolean(sub?.complimentary),
       revenueMXN: pay?.total || 0,
       firstPaymentAt: pay?.first || null,
@@ -326,7 +331,14 @@ export async function sendDailyDigest(now = new Date()) {
   const uncontacted = rows.filter((r) => r.autoStage !== 'pago' && (!r.lead || r.lead.stage === 'nuevo'));
   const due = rows.filter((r) => r.lead?.nextFollowUpAt && new Date(r.lead.nextFollowUpAt) <= endOfDay && !['ganado', 'perdido'].includes(r.lead.stage));
   const stuck = rows.filter((r) => r.autoStage === 'negocio' && r.lead?.stage !== 'perdido');
-  if (!uncontacted.length && !due.length && !stuck.length) return { skipped: 'nothing' };
+  // Clientes que pagan sin conversaciones en 7 días: riesgo de cancelación.
+  const inactive = await inactivePayingCustomers(now, 7).catch(() => []);
+  if (!uncontacted.length && !due.length && !stuck.length && !inactive.length) return { skipped: 'nothing' };
+  const fmtLast = (d) => (d ? `última conversación ${new Date(d).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', timeZone: 'America/Mexico_City' })}` : 'sin conversaciones reales');
+  const liInactive = inactive
+    .slice(0, 25)
+    .map((c) => `<li>${escapeHtml(c.ownerName)} · ${escapeHtml(c.email)}${c.phone ? ` · ${escapeHtml(c.phone)}` : ''} · ${escapeHtml(c.businessName)} <span style="color:#64748B">(Plan ${escapeHtml(c.planName)}${c.cycle === 'anual' ? ' anual' : ''}, ${fmtLast(c.lastActivityAt)})</span></li>`)
+    .join('');
   const li = (list) =>
     list
       .slice(0, 25)
@@ -337,9 +349,10 @@ export async function sendDailyDigest(now = new Date()) {
     ${uncontacted.length ? `<h3>Sin contactar (${uncontacted.length})</h3><ul>${li(uncontacted)}</ul>` : ''}
     ${due.length ? `<h3>Seguimiento para hoy (${due.length})</h3><ul>${li(due)}</ul>` : ''}
     ${stuck.length ? `<h3>Crearon su negocio pero no conectaron canal (${stuck.length})</h3><p style="color:#64748B">Candidatos para conexión asistida.</p><ul>${li(stuck)}</ul>` : ''}
+    ${inactive.length ? `<h3>Pagan pero llevan 7 días sin conversaciones (${inactive.length})</h3><p style="color:#64748B">Riesgo de cancelación: llámales para revisar su bot o su conexión.</p><ul>${liInactive}</ul>` : ''}
     <p><a href="${env.publicUrl.replace(/\/$/, '')}/dashboard/embudo" style="color:#0E8A68;font-weight:bold">Abrir el embudo</a></p></div>`;
-  for (const addr of to) await sendEmail({ to: addr, subject: `RenBotIA · ${uncontacted.length + due.length} pendientes de seguimiento`, html });
-  return { sent: to.length };
+  for (const addr of to) await sendEmail({ to: addr, subject: `RenBotIA · ${uncontacted.length + due.length + inactive.length} pendientes de seguimiento`, html });
+  return { sent: to.length, inactive: inactive.length };
 }
 
 function escapeHtml(s = '') {
@@ -399,6 +412,9 @@ export function startFunnelScheduler() {
       if (weekday === 'Mon' && hour >= 8 && (await claimRun(`funnel_weekly_${ymd}`))) await track(sendWeeklyReport());
       // Ayuda para conectar: solo en horario razonable (8 a 21 h de México).
       if (hour >= 8 && hour < 21) await track(sendConnectNudges());
+      // Retención: oferta del anual (10 a 19 h) y aviso de tarjeta por vencer (una vez al día).
+      if (hour >= 10 && hour < 19) await track(sendAnnualOffers());
+      if (hour >= 10 && (await claimRun(`card_expiry_${ymd}`))) await track(sendCardExpiryNotices());
     } catch (err) {
       logger.warn(`Embudo: reportes: ${err.message}`);
     }

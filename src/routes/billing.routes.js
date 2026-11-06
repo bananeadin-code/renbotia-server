@@ -27,7 +27,7 @@ router.get('/config', requireAuth, billing.getBillingConfig); // clave publicabl
 router.get('/payment-method', requireAuth, ...ownerOnly, billing.getPaymentMethod);
 
 // Mutaciones de plan/pago: SOLO dueño.
-router.post('/cancel', requireAuth, ...ownerOnly, billing.cancelSubscription);
+router.post('/cancel', requireAuth, ...ownerOnly, validate(billing.cancelSchema), billing.cancelSubscription);
 router.post('/resume', requireAuth, ...ownerOnly, billing.resumeSubscription);
 router.post('/change-plan', requireAuth, ...ownerOnly, validate(billing.changePlanSchema), billing.changePlan);
 // Garantía de 30 días del plan anual: reembolso completo y pasa a Free (pide verificar identidad).

@@ -83,6 +83,14 @@ const subscriptionSchema = new mongoose.Schema(
     // periodo sin pago (Free, mes de regalo, cortesía o plan anual). Es la base
     // del descuento por los días no usados al mejorar de plan.
     periodPaidMXN: { type: Number, default: 0, min: 0 },
+
+    // ── Retención ──
+    // Encuesta al cancelar (motivo de CANCEL_REASONS + comentario libre).
+    cancelReason: { type: String, default: '' },
+    cancelComment: { type: String, default: '', maxlength: 500 },
+    canceledAt: { type: Date, default: null },
+    // Correo de "pásate a anual" (se envía una sola vez).
+    annualOfferSentAt: { type: Date, default: null },
   },
   { timestamps: true }
 );

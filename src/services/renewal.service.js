@@ -33,7 +33,8 @@ import { logAudit } from './audit.service.js';
  * lo que le quedaba del periodo anterior más sus créditos extra.
  */
 
-export const GRACE_DAYS = 3;
+// Días de gracia tras un cobro rechazado (se reintenta cada 24 h) antes de bajar a Free.
+export const GRACE_DAYS = 7;
 const RETRY_HOURS = 24;
 const LOCK_MINUTES = 10;
 const REMINDER_DAYS = 3;

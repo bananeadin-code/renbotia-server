@@ -42,6 +42,8 @@ const billingProfileSchema = new mongoose.Schema(
     // Candado de la recarga automática: varios mensajes simultáneos con saldo
     // bajo no deben disparar varios cobros a la vez.
     autoRechargeLockUntil: { type: Date, default: null },
+    // Tarjeta (pm_…) para la que ya se avisó que está por vencer (un aviso por tarjeta).
+    cardExpiryNoticeFor: { type: String, default: '' },
   },
   { timestamps: true }
 );

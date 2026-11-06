@@ -90,6 +90,17 @@ export function renewalEmail(p) {
       } y conserva tu bot y tu configuración.`,
       cta: 'Ver mi cuenta',
     },
+    card_expiring: {
+      tag: ['Acción necesaria', '#fff7ed', '#b45309'],
+      subject: 'Tu tarjeta guardada está por vencer',
+      title: 'Actualiza tu tarjeta',
+      body: `${greetName} la ${card || 'tarjeta guardada'}${biz} vence en <b>${escapeHtml(
+        p.expires || ''
+      )}</b>. Con ella se cobran las renovaciones de tu plan${
+        p.nextCharge ? ` (la próxima: ${fmt(p.nextCharge)})` : ''
+      }. Cámbiala desde Facturación para que tu bot siga sin interrupciones.`,
+      cta: 'Actualizar tarjeta',
+    },
   };
   const v = variants[p.kind] || variants.upcoming;
 

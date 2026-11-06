@@ -82,12 +82,26 @@ describe('billetera y renovación gratis', () => {
     assert.ok(s.pastDueSince && s.nextRenewalAttemptAt > new Date());
   });
 
-  it('al terminar la gracia baja a Free y conserva los créditos comprados', async () => {
-    const { business } = await makeOwner('Fer');
-    await setPlan(business, 'elite', {
+  it('con 4 días vencida sigue en gracia (son 7 días) y conserva su plan', async () => {
+    const { business } = await makeOwner('Gracia');
+    await setPlan(business, 'pro', {
       renewalDate: new Date(Date.now() - 5 * DAY),
       status: 'vencida',
       pastDueSince: new Date(Date.now() - 4 * DAY),
+    });
+    assert.equal(await renewSubscription((await sub(business))._id), 'failed');
+    const s = await sub(business);
+    assert.equal(s.plan.key, 'pro');
+    assert.equal(s.status, 'vencida');
+  });
+
+  it('al terminar la gracia baja a Free y conserva los créditos comprados', async () => {
+    const { business } = await makeOwner('Fer');
+    await setPlan(business, 'elite', {
+      renewalDate: new Date(Date.now() - 9 * DAY),
+      status: 'vencida',
+      // Gracia de 7 días ya vencida.
+      pastDueSince: new Date(Date.now() - 8 * DAY),
       extraTokens: 50000,
     });
     await renewSubscription((await sub(business))._id);

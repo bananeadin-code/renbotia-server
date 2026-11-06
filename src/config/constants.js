@@ -77,6 +77,17 @@ export const ANNUAL = {
   guaranteeDays: 30,
 };
 
+/** Motivos de cancelación (encuesta al cancelar; se guardan en la suscripción y el CRM). */
+export const CANCEL_REASONS = {
+  precio: 'Es muy caro para mí',
+  no_lo_uso: 'No lo estoy usando',
+  no_pude_conectar: 'No pude conectar o configurar mi WhatsApp',
+  falta_funcion: 'Le falta algo que necesito',
+  otro_servicio: 'Me cambio a otro servicio',
+  temporal: 'Es temporal (cierre o pausa del negocio)',
+  otro: 'Otro motivo',
+};
+
 /**
  * Sesión de orientación por videollamada (configuración asistida): gratis para
  * todos durante el lanzamiento y siempre incluida en el plan anual.

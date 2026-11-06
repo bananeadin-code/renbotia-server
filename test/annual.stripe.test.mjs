@@ -116,7 +116,7 @@ describe('plan anual con Stripe (modo prueba)', { skip }, () => {
     // Termina la gracia sin pago: pasa a Free y deja de ser anual.
     await Subscription.updateOne(
       { business: o.business._id },
-      { $set: { pastDueSince: new Date(Date.now() - 4 * DAY), nextRenewalAttemptAt: null } }
+      { $set: { pastDueSince: new Date(Date.now() - 8 * DAY), nextRenewalAttemptAt: null } }
     );
     assert.equal(await renewSubscription(sub._id), 'failed');
     sub = await subOf(o);
