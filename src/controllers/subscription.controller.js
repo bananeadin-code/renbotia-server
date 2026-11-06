@@ -36,7 +36,7 @@ export const getMySubscription = asyncHandler(async (req, res) => {
   const chargeCycle = inTerm ? subscription.pendingCycle || 'anual' : nextCycle(subscription);
   const charges = isPaidPlanKey(chargeKey) && !subscription.complimentary;
 
-  // Sesión de orientación: incluida en el lanzamiento y en anual; se oculta
+  // Sesión de orientación: gratis para cualquier cuenta, una por negocio; se oculta
   // cuando el equipo la marca como realizada.
   const business = await Business.findById(req.businessId).select('owner').lean();
   const lead = business ? await Lead.findOne({ user: business.owner }).select('orientationAt').lean() : null;

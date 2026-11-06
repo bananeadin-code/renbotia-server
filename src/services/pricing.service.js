@@ -1,4 +1,4 @@
-import { PLANS, ANNUAL, ORIENTATION } from '../config/constants.js';
+import { PLANS, ANNUAL } from '../config/constants.js';
 import { env } from '../config/env.js';
 
 /**
@@ -182,10 +182,8 @@ export const guaranteeActive = (sub, now = new Date()) =>
 
 export const guaranteeEndsFrom = (now = new Date()) => new Date(at(now) + ANNUAL.guaranteeDays * DAY);
 
-/** Sesión de orientación gratuita: todos durante el lanzamiento; siempre en anual. */
-export const orientationFreeUntil = () => new Date(process.env.ORIENTATION_FREE_UNTIL || ORIENTATION.freeUntil);
-export const orientationIncluded = (sub, now = new Date()) =>
-  at(now) < orientationFreeUntil().getTime() || hasActiveAnnual(sub, now);
+/** Sesión de orientación: gratis para cualquier cuenta, una por negocio (ver Lead.orientationAt). */
+export const orientationIncluded = () => true;
 
 /** Lo que necesitan las pantallas para mostrar el anual (público). */
 export function pricingConfig(now = new Date()) {
@@ -199,8 +197,8 @@ export function pricingConfig(now = new Date()) {
       guaranteeDays: ANNUAL.guaranteeDays,
     },
     orientation: {
-      freeForAll: at(now) < orientationFreeUntil().getTime(),
-      freeUntil: orientationFreeUntil(),
+      freeForAll: true,
+      onePerBusiness: true,
       bookingUrl: env.funnel?.bookingUrl || '',
     },
   };
@@ -235,9 +233,7 @@ export function annualPricingText(now = new Date()) {
   const founder = isFounderWindow(now);
   const lastFounderDay = new Date(founderUntil().getTime() - 1);
   const orientation =
-    at(now) < orientationFreeUntil().getTime()
-      ? 'Sesión de orientación por videollamada gratis para todos durante el lanzamiento (siempre incluida en el plan anual).'
-      : 'El plan anual incluye una sesión de orientación por videollamada.';
+    'Cualquier cuenta, incluido el plan Free, puede agendar gratis una sesión de orientación por videollamada (una por negocio) para configurar su bot y resolver dudas de planes.';
   return [
     `Plan anual: pagas ${annualMonthsPaid(now)} meses y recibes 12. Pro ${fmtMoney(pro.priceMXN)} MXN al año (equivale a ${fmtMoney(
       pro.perMonthMXN

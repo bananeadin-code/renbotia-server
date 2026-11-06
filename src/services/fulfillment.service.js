@@ -5,6 +5,7 @@ import { Business } from '../models/Business.js';
 import { Subscription } from '../models/Subscription.js';
 import { Plan } from '../models/Plan.js';
 import { Payment } from '../models/Payment.js';
+import { Lead } from '../models/Lead.js';
 import { ApiError } from '../utils/ApiError.js';
 import { addMonths } from '../utils/dates.js';
 import { logger } from '../utils/logger.js';
@@ -168,7 +169,7 @@ const fmtDate = (d) =>
   new Date(d).toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'America/Mexico_City' });
 
 /** Notas del comprobante: vigencia del año, garantía y sesión de orientación. */
-function receiptNotes(sub) {
+function receiptNotes(sub, orientationDone = false) {
   const notes = [];
   if (!sub) return notes;
   if (sub.billingCycle === 'anual' && sub.termEndsAt) {
@@ -179,9 +180,9 @@ function receiptNotes(sub) {
       text: `Tienes garantía de 30 días: si RenBotIA no te funciona, pide el reembolso completo desde Facturación antes del ${fmtDate(sub.guaranteeEndsAt)}.`,
     });
   }
-  if (orientationIncluded(sub) && env.funnel.bookingUrl) {
+  if (orientationIncluded(sub) && !orientationDone && env.funnel.bookingUrl) {
     notes.push({
-      text: 'Incluye una sesión de orientación por videollamada para dejar tu bot funcionando.',
+      text: 'Tienes una sesión de orientación gratis por videollamada para dejar tu bot funcionando.',
       href: env.funnel.bookingUrl,
       linkText: 'Agenda tu sesión',
     });
@@ -255,7 +256,7 @@ export async function fulfillPaymentIntent(pi) {
       description,
       amountMXN,
       reference: pi.id,
-      notes: receiptNotes(sub),
+      notes: receiptNotes(sub, Boolean((await Lead.findOne({ user: m.userId }).select('orientationAt').lean())?.orientationAt)),
     });
     void qualifyReferral(m.userId);
     void onPurchase(claim); // embudo: conversión de compra

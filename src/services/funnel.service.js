@@ -391,7 +391,7 @@ export async function sendConnectNudges(now = new Date()) {
       name: r.name,
       step: r.autoStage,
       second: count === 1,
-      bookingUrl: env.funnel.bookingUrl || `${base}/contacto`,
+      bookingUrl: (!r.lead?.orientationAt && env.funnel.bookingUrl) || `${base}/dashboard/ayuda`,
       connectUrl: `${base}/dashboard/conexiones`,
       onboardingUrl: `${base}/onboarding`,
     });

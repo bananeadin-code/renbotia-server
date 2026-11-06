@@ -8,7 +8,7 @@ import { User } from '../models/User.js';
 import { ROLES } from '../config/constants.js';
 import { logger } from '../utils/logger.js';
 
-export const SUPPORT_TOPICS = ['Conexión de WhatsApp', 'Entrenamiento del bot', 'Facturación', 'Ventas y planes', 'Otro'];
+export const SUPPORT_TOPICS = ['Conexión de WhatsApp', 'Entrenamiento del bot', 'Otra sesión de orientación', 'Facturación', 'Ventas y planes', 'Otro'];
 
 export const supportMessageSchema = z.object({
   topic: z.enum(SUPPORT_TOPICS).optional(),

@@ -89,6 +89,7 @@ describe('Embudo comercial', () => {
     const TT = await tokenFor(target.user);
     const ori = async () => (await call('GET', '/subscription/me', TT))[1].data.subscription.orientation;
     assert.equal((await ori()).done, false);
+    assert.equal((await ori()).included, true, 'gratis también para cuentas Free');
     assert.equal((await call('PATCH', `/funnel/leads/${target.user._id}`, TS, { orientationDone: true }))[0], 200);
     assert.ok((await Lead.findOne({ user: target.user._id })).orientationAt);
     assert.equal((await ori()).done, true);

@@ -89,12 +89,10 @@ export const CANCEL_REASONS = {
 };
 
 /**
- * Sesión de orientación por videollamada (configuración asistida): gratis para
- * todos durante el lanzamiento y siempre incluida en el plan anual.
+ * Sesión de orientación por videollamada: gratis para CUALQUIER cuenta (también
+ * Free), una por negocio. Al marcarla como realizada (Embudo) se ocultan las
+ * ligas para agendar; otra sesión se pide por el formulario de Ayuda.
  */
-export const ORIENTATION = {
-  freeUntil: '2027-02-01T06:00:00.000Z',
-};
 
 /**
  * Canales que de verdad se pueden conectar hoy. Los beneficios de PLANS usan
