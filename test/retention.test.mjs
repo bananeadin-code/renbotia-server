@@ -74,6 +74,25 @@ describe('retención de clientes', () => {
     assert.equal(bad.status, 400);
   });
 
+  it('mensaje desde Ayuda: queda en la ficha del cliente con seguimiento para hoy', async () => {
+    const o = await makeOwner('Ayuda');
+    const send = (body, token) =>
+      fetch(`${A}/support/message`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, 'CF-Connecting-IP': `10.11.${Math.floor(Math.random() * 250)}.1` },
+        body: JSON.stringify(body),
+      });
+    const token = await tokenFor(o);
+    const r = await send({ topic: 'Conexión de WhatsApp', message: 'No me llega el código de verificación al número.' }, token);
+    assert.equal(r.status, 200);
+    const lead = await Lead.findOne({ user: o.user._id }).lean();
+    assert.match(lead.notes.at(-1).text, /Mensaje desde Ayuda \(Conexión de WhatsApp\): No me llega el código/);
+    assert.ok(lead.nextFollowUpAt <= new Date());
+    assert.equal((await send({ message: 'corto' }, token)).status, 400, 'valida el mensaje');
+    const anon = await fetch(`${A}/support/message`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    assert.equal(anon.status, 401, 'requiere sesión');
+  });
+
   it('oferta del anual: días 20–25 de un mes pagado, una sola vez; nunca a regalo, cortesía ni anual', async () => {
     const day21 = { currentPeriodStart: new Date(Date.now() - 21 * DAY), renewalDate: new Date(Date.now() + 9 * DAY) };
     const yes = await makeOwner('OfertaSi');
