@@ -147,6 +147,7 @@ async function maybeReward(referrerId) {
     sub.tokensUsedThisPeriod = 0;
     sub.pendingPlanKey = 'free';
     sub.lowBalanceNotified = false;
+    sub.periodPaidMXN = 0; // regalo: no genera descuento al mejorar
     kind = 'trial';
   } else {
     // Ya paga: el mes de Pro llega como créditos que no caducan.

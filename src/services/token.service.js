@@ -113,6 +113,7 @@ export async function applyLazyReset(subscription) {
         nextRenewalAttemptAt: null,
         pastDueSince: null,
         lastRenewalError: '',
+        periodPaidMXN: 0,
       };
   // Termina el año y pasa a Free: deja de ser anual (y pierde el precio de fundador).
   if (!inTerm && !isPaidPlanKey(targetKey) && subscription.billingCycle === 'anual') {

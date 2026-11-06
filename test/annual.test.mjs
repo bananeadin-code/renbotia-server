@@ -87,7 +87,7 @@ describe('plan anual y vista de agencia', () => {
     assert.equal(pricing.quotePlanPurchase(free, 'pro', 'anual', new Date('2027-02-02T18:00:00Z')).amountMXN, 4790);
 
     // Pro mensual vigente → Pro anual: el año arranca al terminar el mes pagado.
-    const proMonthly = { ...free, plan: { key: 'pro' } };
+    const proMonthly = { ...free, plan: { key: 'pro' }, periodPaidMXN: 479, currentPeriodStart: new Date(now.getTime() - 10 * DAY) };
     const q = pricing.quotePlanPurchase(proMonthly, 'pro', 'anual', now);
     assert.equal(q.meta.annualStart, String(proMonthly.renewalDate.getTime()));
 
@@ -110,6 +110,28 @@ describe('plan anual y vista de agencia', () => {
     // Sin precio de fundador, en mayo ya rige el anual normal de Elite ($9,990).
     const up2 = pricing.quotePlanPurchase({ ...proAnnual, founder: false }, 'elite', 'anual', half);
     assert.ok(Math.abs(up2.amountMXN - (9990 - 4311) / 2) <= 2, `prorrateo normal ${up2.amountMXN}`);
+  });
+
+  it('mejorar ya (mensual): descuenta solo días PAGADOS no usados', async () => {
+    const now = new Date('2026-11-20T18:00:00Z');
+    const start = new Date('2026-11-05T18:00:00Z');
+    const end = new Date('2026-12-05T18:00:00Z'); // 30 días; quedan 15
+    const proPaid = { plan: { key: 'pro' }, status: 'activa', periodPaidMXN: 479, currentPeriodStart: start, renewalDate: end };
+    const q = pricing.quotePlanPurchase(proPaid, 'elite', 'mensual', now);
+    assert.equal(q.meta.creditMXN, String(Math.round(479 / 2)));
+    assert.equal(q.amountMXN, 999 - Math.round(479 / 2));
+    // Mes de regalo por referidos, cortesía o pago vencido: sin descuento.
+    for (const s of [
+      { ...proPaid, periodPaidMXN: 0, pendingPlanKey: 'free' },
+      { ...proPaid, complimentary: true },
+      { ...proPaid, status: 'vencida' },
+    ]) {
+      assert.equal(pricing.quotePlanPurchase(s, 'elite', 'mensual', now).amountMXN, 999);
+    }
+    // Pagó Pro y programó bajar a Free: sus días siguen pagados, sí descuenta.
+    assert.equal(pricing.quotePlanPurchase({ ...proPaid, pendingPlanKey: 'free' }, 'elite', 'mensual', now).amountMXN, 999 - 240);
+    // El primer día descuenta casi todo, pero nunca cobra menos de $10.
+    assert.equal(pricing.quotePlanPurchase({ ...proPaid, periodPaidMXN: 5000 }, 'elite', 'mensual', now).amountMXN, 10);
   });
 
   it('compra anual: año de 12 meses, garantía, fundador y pago registrado como anual', async () => {

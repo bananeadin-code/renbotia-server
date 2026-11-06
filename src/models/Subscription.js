@@ -79,6 +79,10 @@ const subscriptionSchema = new mongoose.Schema(
     annualGuaranteeGranted: { type: Boolean, default: false },
     // Fecha del año para la que ya se envió el aviso de 15 días (anti-spam).
     annualReminderFor: { type: Date, default: null },
+    // Valor del mes de PAGO en curso (precio mensual con el que se abrió). 0 =
+    // periodo sin pago (Free, mes de regalo, cortesía o plan anual). Es la base
+    // del descuento por los días no usados al mejorar de plan.
+    periodPaidMXN: { type: Number, default: 0, min: 0 },
   },
   { timestamps: true }
 );

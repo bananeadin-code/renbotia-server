@@ -230,6 +230,8 @@ export const quotePlan = asyncHandler(async (req, res) => {
       description: q.description.replace(/ — RenBotIA$/, ''),
       cycle: q.meta.cycle,
       mode: q.meta.mode,
+      // Descuento por los días no usados del plan actual (mejorar ya).
+      creditMXN: Number(q.meta.creditMXN) || 0,
       startsAt: q.meta.annualStart && q.meta.annualStart !== '0' ? new Date(Number(q.meta.annualStart)) : null,
     },
   });
@@ -492,6 +494,7 @@ export const guaranteeRefund = asyncHandler(async (req, res) => {
         nextRenewalAttemptAt: null,
         pastDueSince: null,
         lastRenewalError: '',
+        periodPaidMXN: 0,
       },
     }
   );

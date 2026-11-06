@@ -88,6 +88,29 @@ export function prorateAnnualUpgrade(sub, newKey, now = new Date()) {
 }
 
 /**
+ * ¿Tiene un mes de PAGO vigente? (no Free, regalo de referidos, cortesía,
+ * anual ni vencido). Solo así hay días pagados que descontar.
+ */
+export function paidMonthActive(sub, now = new Date()) {
+  return (
+    (sub?.periodPaidMXN || 0) > 0 &&
+    sub?.billingCycle !== 'anual' &&
+    !sub?.complimentary &&
+    sub?.status !== 'vencida' &&
+    Boolean(sub?.currentPeriodStart) &&
+    at(sub?.renewalDate) > at(now)
+  );
+}
+
+/** Valor de los días que no usó de su mes pagado (se descuenta al mejorar ya). */
+export function unusedCreditMXN(sub, now = new Date()) {
+  if (!paidMonthActive(sub, now)) return 0;
+  const total = Math.max(DAY, at(sub.renewalDate) - at(sub.currentPeriodStart));
+  const left = Math.min(1, Math.max(0, (at(sub.renewalDate) - at(now)) / total));
+  return Math.round(sub.periodPaidMXN * left);
+}
+
+/**
  * Cotiza la compra de un plan desde el checkout. Decide el caso y el monto:
  *  - mensual: solo mejoras sin año vigente (precio de lista).
  *  - anual con año vigente: mejora a mitad del año (diferencia proporcional).
@@ -109,7 +132,13 @@ export function quotePlanPurchase(sub, planKey, cycle = 'mensual', now = new Dat
     if (plan.priceMXN <= currentPrice) {
       return { error: 'Para bajar o mantener tu plan usa "Cambiar plan"; aplica en tu renovación.' };
     }
-    return { amountMXN: plan.priceMXN, description: `Plan ${plan.name} — RenBotIA`, meta: { cycle: 'mensual', mode: 'monthly' } };
+    // Mejora inmediata: el mes nuevo empieza hoy y se descuenta lo que no usó.
+    const creditMXN = Math.min(plan.priceMXN - 10, unusedCreditMXN(sub, now));
+    return {
+      amountMXN: Math.max(10, plan.priceMXN - creditMXN),
+      description: `Plan ${plan.name}${creditMXN ? ' (descontando tu plan actual)' : ''} — RenBotIA`,
+      meta: { cycle: 'mensual', mode: 'monthly', creditMXN: String(creditMXN) },
+    };
   }
 
   if (annualActive) {
@@ -129,16 +158,9 @@ export function quotePlanPurchase(sub, planKey, cycle = 'mensual', now = new Dat
     };
   }
 
-  // ¿Tiene un mes de pago vigente (no regalo ni cortesía ni vencido)?
-  const paidMonthActive =
-    currentPrice > 0 &&
-    !sub?.complimentary &&
-    sub?.status !== 'vencida' &&
-    sub?.pendingPlanKey !== 'free' && // mes de regalo por referidos: no lo pagó
-    at(sub?.renewalDate) > at(now);
   const annual = annualPriceFor(sub, plan.key, now);
   // Mismo plan: el año empieza al terminar el mes ya pagado (no pierde días).
-  if (paidMonthActive && currentKey === plan.key) {
+  if (paidMonthActive(sub, now) && currentKey === plan.key) {
     return {
       amountMXN: annual,
       description: `Plan ${plan.name} anual — RenBotIA`,
@@ -146,12 +168,7 @@ export function quotePlanPurchase(sub, planKey, cycle = 'mensual', now = new Dat
     };
   }
   // Otro plan: el año empieza hoy y se descuenta lo que no usó de su mes pagado.
-  let creditMXN = 0;
-  if (paidMonthActive && sub?.currentPeriodStart) {
-    const total = Math.max(DAY, at(sub.renewalDate) - at(sub.currentPeriodStart));
-    const left = Math.min(1, Math.max(0, (at(sub.renewalDate) - at(now)) / total));
-    creditMXN = Math.round(currentPrice * left);
-  }
+  const creditMXN = unusedCreditMXN(sub, now);
   return {
     amountMXN: Math.max(10, annual - creditMXN),
     description: `Plan ${plan.name} anual${creditMXN ? ' (descontando tu mes actual)' : ''} — RenBotIA`,

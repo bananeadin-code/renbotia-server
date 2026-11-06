@@ -120,6 +120,7 @@ export async function finalizeRenewal({ subscriptionId, dueDate, planKey, paymen
         pastDueSince: null,
         lastRenewalError: '',
         renewalLockUntil: null,
+        periodPaidMXN: annual ? 0 : charged,
         ...(annual
           ? {
               billingCycle: 'anual',
@@ -184,6 +185,7 @@ async function downgradeToFree(sub, reason) {
         pastDueSince: null,
         lastRenewalError: reason || '',
         renewalLockUntil: null,
+        periodPaidMXN: 0,
         ...ANNUAL_RESET,
       },
     }

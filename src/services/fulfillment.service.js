@@ -73,6 +73,9 @@ export async function upgradeSubscriptionPlan(businessId, planKey) {
   sub.lastRenewalError = '';
   // Plan mensual: deja de ser anual (solo se compra mensual sin un año vigente).
   Object.assign(sub, ANNUAL_RESET);
+  // Mes nuevo de pago: vale el precio mensual del plan (aunque se haya
+  // descontado lo que no usó del anterior, recibe un mes completo).
+  sub.periodPaidMXN = plan.priceMXN;
   await sub.save();
   return sub;
 }
@@ -136,6 +139,7 @@ export async function applyAnnualPurchase(businessId, { planKey, mode, amountMXN
     sub.renewalDate = addMonths(now, 1);
     sub.tokensUsedThisPeriod = 0;
     sub.lowBalanceNotified = false;
+    sub.periodPaidMXN = 0; // ahora lo cubre el año
   }
   reset();
   sub.billingCycle = 'anual';

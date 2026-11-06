@@ -157,6 +157,54 @@ describe('plan anual con Stripe (modo prueba)', { skip }, () => {
     assert.equal(sub.lockedAnnualMXN, annual, 'conserva el precio anual completo para renovar');
   });
 
+  it('Pro → Elite mensual "Mejorar ahora": cobra con descuento, reinicia el cupo y conserva créditos extra', async () => {
+    const o = await ownerWithCard('MejoraYa');
+    const [, m] = await post('/billing/intent', o.token, { kind: 'plan', planKey: 'pro' });
+    assert.equal(m.data.status, 'succeeded');
+    // Simula que ya usó la mitad de su mes de Pro y gastó cupo; tiene créditos extra comprados.
+    const now = Date.now();
+    await Subscription.updateOne(
+      { business: o.business._id },
+      { $set: { currentPeriodStart: new Date(now - 15 * DAY), renewalDate: new Date(now + 15 * DAY), tokensUsedThisPeriod: 600_000, extraTokens: 100_000 } }
+    );
+    const [, j] = await post('/billing/intent', o.token, { kind: 'plan', planKey: 'elite' });
+    assert.equal(j.data.status, 'succeeded');
+    const charged = (await stripe.paymentIntents.retrieve(j.data.paymentIntentId)).amount / 100;
+    assert.ok(Math.abs(charged - (999 - 240)) <= 2, `cobró ${charged}: $999 menos ~$240 de días no usados`);
+    const sub = await subOf(o);
+    assert.equal(sub.plan.key, 'elite');
+    assert.equal(sub.tokensUsedThisPeriod, 0, 'cupo de Elite completo desde hoy');
+    assert.equal(sub.extraTokens, 100_000, 'los créditos comprados se conservan');
+    assert.ok(Math.abs(sub.renewalDate - addMonths(new Date(), 1)) < 60_000, 'mes nuevo desde hoy');
+    assert.equal(sub.periodPaidMXN, 999);
+    // Un segundo "mejorar" al mismo plan no se permite (no cobra de más).
+    assert.equal((await post('/billing/intent', o.token, { kind: 'plan', planKey: 'elite' }))[0], 400);
+  });
+
+  it('Pro → Elite "Cambiar en mi renovación": sin cobro hoy; en la renovación cobra Elite y reinicia el cupo', async () => {
+    const o = await ownerWithCard('Programa');
+    const [, m] = await post('/billing/intent', o.token, { kind: 'plan', planKey: 'pro' });
+    assert.equal(m.data.status, 'succeeded');
+    const before = (await succeeded(o.customerId)).length;
+    const [s] = await post('/billing/change-plan', o.token, { planKey: 'elite' });
+    assert.equal(s, 200);
+    let sub = await subOf(o);
+    assert.equal(sub.plan.key, 'pro', 'sigue en Pro hasta que terminen sus días');
+    assert.equal(sub.pendingPlanKey, 'elite');
+    assert.equal((await succeeded(o.customerId)).length, before, 'no cobra hoy');
+    // Llega su renovación.
+    await Subscription.updateOne({ business: o.business._id }, { $set: { renewalDate: new Date(Date.now() - 60_000), tokensUsedThisPeriod: 900_000 } });
+    assert.equal(await renewSubscription(sub._id), 'renewed');
+    const after = await succeeded(o.customerId);
+    assert.equal(after.length, before + 1, 'un solo cargo');
+    assert.equal(after[0].amount, 999 * 100, 'cobra el precio de Elite');
+    sub = await subOf(o);
+    assert.equal(sub.plan.key, 'elite');
+    assert.equal(sub.pendingPlanKey, '');
+    assert.equal(sub.tokensUsedThisPeriod, 0, 'cupo de Elite completo');
+    assert.equal(sub.periodPaidMXN, 999);
+  });
+
   it('de Pro mensual a Pro anual: el año empieza al terminar su mes y la garantía respeta ese mes', async () => {
     const o = await ownerWithCard('MismoPlan');
     const [, m] = await post('/billing/intent', o.token, { kind: 'plan', planKey: 'pro' });
