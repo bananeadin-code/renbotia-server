@@ -83,7 +83,11 @@ export function renewalEmail(p) {
       title: 'Tu reembolso está en camino',
       body: `${greetName} con la garantía de 30 días devolvimos <b>${money}</b> a tu ${
         card || 'tarjeta'
-      }. Según tu banco, puede tardar de 5 a 10 días hábiles en verse en tu estado de cuenta. Tu cuenta${biz} pasó al plan Free y conserva tu bot y tu configuración.`,
+      }. Según tu banco, puede tardar de 5 a 10 días hábiles en verse en tu estado de cuenta. ${
+        p.until
+          ? `Conservas tu mes ya pagado hasta el ${escapeHtml(p.until)}; después tu cuenta${biz} pasa al plan Free`
+          : `Tu cuenta${biz} pasó al plan Free`
+      } y conserva tu bot y tu configuración.`,
       cta: 'Ver mi cuenta',
     },
   };

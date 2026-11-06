@@ -470,11 +470,15 @@ export const guaranteeRefund = asyncHandler(async (req, res) => {
     throw new ApiError(502, 'No pudimos procesar el reembolso en este momento. Intenta de nuevo en unos minutos.');
   }
 
-  // Pasa a Free al instante (conserva bot, configuración y créditos comprados).
+  // Si su año aún no empezaba (se pasó de mensual a anual y seguía en su mes
+  // ya pagado), conserva ese mes y pasa a Free al terminarlo. Si no, a Free ya.
+  const monthStillPaid = sub.termStartedAt && sub.termStartedAt.getTime() > now.getTime();
   const free = await Plan.findOne({ key: 'free' });
   await Subscription.updateOne(
     { _id: sub._id },
-    {
+    monthStillPaid
+      ? { $set: { ...ANNUAL_RESET, status: 'cancelada', pendingPlanKey: '' } }
+      : {
       $set: {
         ...ANNUAL_RESET,
         plan: free._id,
@@ -491,6 +495,9 @@ export const guaranteeRefund = asyncHandler(async (req, res) => {
       },
     }
   );
+  const untilStr = monthStillPaid
+    ? sub.termStartedAt.toLocaleDateString('es-MX', { day: 'numeric', month: 'long', timeZone: 'America/Mexico_City' })
+    : '';
 
   const profile = await BillingProfile.findOne({ business: req.businessId }).lean();
   const biz = await Business.findById(req.businessId).select('name').lean();
@@ -500,20 +507,23 @@ export const guaranteeRefund = asyncHandler(async (req, res) => {
     businessName: biz?.name,
     amountMXN: total,
     card: profile?.paymentMethod ? { brand: profile.paymentMethod.brand, last4: profile.paymentMethod.last4 } : null,
+    until: untilStr,
     url: `${env.publicUrl.replace(/\/$/, '')}/dashboard/facturacion`,
   });
   void logAudit({
     businessId: req.businessId,
     userId: req.userId,
     action: 'plan.guarantee_refund',
-    summary: `Usó la garantía de 30 días: reembolso de $${total} MXN y pasó a Free.`,
+    summary: `Usó la garantía de 30 días: reembolso de $${total} MXN${monthStillPaid ? `; conserva su mes pagado hasta el ${untilStr}` : ' y pasó a Free'}.`,
     metadata: { refunded, totalMXN: total },
   });
   alertOps({ kind: 'billing', message: `Garantía usada: negocio ${req.businessId} reembolsó $${total} MXN.` });
 
   res.json({
     success: true,
-    message: `Listo: reembolsamos $${total.toLocaleString('es-MX')} MXN a tu tarjeta. Tu cuenta pasó al plan Free.`,
+    message: monthStillPaid
+      ? `Listo: reembolsamos $${total.toLocaleString('es-MX')} MXN a tu tarjeta. Conservas tu mes ya pagado hasta el ${untilStr}; después tu cuenta pasa a Free.`
+      : `Listo: reembolsamos $${total.toLocaleString('es-MX')} MXN a tu tarjeta. Tu cuenta pasó al plan Free.`,
     data: { refundedMXN: total },
   });
 });

@@ -141,9 +141,12 @@ export async function applyAnnualPurchase(businessId, { planKey, mode, amountMXN
   sub.billingCycle = 'anual';
   sub.termStartedAt = start;
   sub.termEndsAt = addMonths(start, 12);
-  sub.termPaidMXN = amountMXN;
+  // Precio anual completo (si se descontó el mes que no usó, el cobro fue menor,
+  // pero lo que conserva al renovar y la base del prorrateo es el precio anual).
+  const annualValue = newAnnualMXN || amountMXN;
+  sub.termPaidMXN = annualValue;
   sub.lockedPlanKey = planKey;
-  sub.lockedAnnualMXN = amountMXN;
+  sub.lockedAnnualMXN = annualValue;
   sub.founder = founder;
   if (!sub.annualGuaranteeGranted) {
     sub.annualGuaranteeGranted = true;
