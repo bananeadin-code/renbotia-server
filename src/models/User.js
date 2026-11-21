@@ -9,6 +9,8 @@ const userSchema = new mongoose.Schema(
       required: [true, 'El nombre es obligatorio'],
       trim: true,
     },
+    // Apellido(s). Opcional: las cuentas creadas antes no lo tienen.
+    lastName: { type: String, trim: true, default: '', maxlength: 80 },
     email: {
       type: String,
       required: [true, 'El email es obligatorio'],

@@ -319,13 +319,16 @@ export const stepUpCode = asyncHandler(async (req, res) => {
 
 export const updateProfileSchema = z.object({
   name: z.string().min(2, 'El nombre debe tener al menos 2 caracteres').max(80),
+  lastName: z.string().max(80, 'El apellido es demasiado largo').optional(),
 });
 
-/** PATCH /api/auth/profile — actualiza los datos personales del usuario (nombre). */
+/** PATCH /api/auth/profile — actualiza los datos personales (nombre y apellido). */
 export const updateProfile = asyncHandler(async (req, res) => {
+  const set = { name: req.body.name.trim() };
+  if (typeof req.body.lastName === 'string') set.lastName = req.body.lastName.trim();
   const user = await User.findByIdAndUpdate(
     req.userId,
-    { $set: { name: req.body.name.trim() } },
+    { $set: set },
     { new: true }
   );
   res.json({ success: true, data: { user } });
