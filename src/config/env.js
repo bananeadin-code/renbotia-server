@@ -46,7 +46,7 @@ export const env = {
 
   anthropic: {
     apiKey: process.env.ANTHROPIC_API_KEY || '',
-    model: process.env.CLAUDE_MODEL || 'claude-sonnet-5',
+    model: process.env.CLAUDE_MODEL || 'claude-sonnet-5-5',
   },
 
   stripe: {

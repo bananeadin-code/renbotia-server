@@ -225,27 +225,49 @@ export const PRICING = {
 };
 
 /**
- * Modelo de Claude por plan (palanca de margen). Free/Pro usan Haiku 4.5, más
+ * Modelo de Claude por plan (palanca de margen). Free/Pro usan Haiku 5.5, más
  * barato y rápido, suficiente para FAQs y atención por WhatsApp (no usan visión
- * ni herramientas de gestión). Elite usa Sonnet 5, más capaz, para visión de
+ * ni herramientas de gestión). Elite usa Sonnet 5.5, más capaz, para visión de
  * imágenes y el módulo de Gestión (agendar/pedidos con tool use). El fallback es
  * el modelo de env (CLAUDE_MODEL) por si un plan no está mapeado.
  */
 export const MODEL_BY_PLAN = {
-  free: 'claude-haiku-4-5',
-  pro: 'claude-haiku-4-5',
-  elite: 'claude-sonnet-5',
+  free: 'claude-haiku-5-5',
+  pro: 'claude-haiku-5-5',
+  elite: 'claude-sonnet-5-5',
+};
+
+/**
+ * Ajustes por modelo para las llamadas a la API (claude.service).
+ *  - effort: cuánto piensa antes de responder. Las generaciones 5.5 piensan por
+ *    defecto y eso se cobra como salida; `low` lo mantiene al mínimo en chat
+ *    (en preguntas simples ni siquiera piensa). Con herramientas (agenda de
+ *    Elite) se usa `toolEffort`, un poco más, porque decide pasos.
+ *  - outputHeadroom: tokens extra en max_tokens para que el pensamiento no corte
+ *    la respuesta (el largo real lo define el prompt; solo se paga lo generado).
+ *  - walletFactor: Haiku 5.5 cuenta ~30% más tokens por el mismo texto (otro
+ *    tokenizador). Se compensa en lo que se descuenta al cliente para que una
+ *    conversación le cueste lo mismo que antes en su billetera.
+ * Modelos que no estén aquí se llaman como antes (sin effort ni ajustes).
+ */
+export const MODEL_SETTINGS = {
+  'claude-haiku-5-5': { effort: 'low', toolEffort: 'low', outputHeadroom: 700, walletFactor: 0.77 },
+  'claude-sonnet-5-5': { effort: 'low', toolEffort: 'medium', outputHeadroom: 1000, walletFactor: 1 },
 };
 
 /**
  * Precios reales por modelo (USD/millón), para estimar el costo por negocio con
  * exactitud en el panel de admin ahora que cada plan corre en un modelo distinto.
  * Caché a TTL 1h: escritura 2× input, lectura 0.1× input.
- *  - Haiku 4.5:  $1 in / $5 out
- *  - Sonnet 5:   $2 in / $10 out
+ *  - Haiku 5.5:  $0.10 in / $0.50 out (Haiku 4.5 era $1 / $5)
+ *  - Sonnet 5.5: $2 in / $10 out (lectura de caché $0.10)
  * Si no hay modelo en el log (registros viejos), se usa PRICING (conservador).
  */
 export const PRICING_BY_MODEL = {
+  // Generación 5.5 (prompts de hasta 100K tokens; los nuestros son mucho menores).
+  'claude-haiku-5-5': { inputPerM: 0.1, outputPerM: 0.5, cacheWritePerM: 0.2, cacheReadPerM: 0.01 },
+  'claude-sonnet-5-5': { inputPerM: 2.0, outputPerM: 10.0, cacheWritePerM: 4.0, cacheReadPerM: 0.1 },
+  // Anteriores (registros viejos en UsageLog).
   'claude-haiku-4-5': { inputPerM: 1.0, outputPerM: 5.0, cacheWritePerM: 2.0, cacheReadPerM: 0.1 },
   'claude-sonnet-5': { inputPerM: 2.0, outputPerM: 10.0, cacheWritePerM: 4.0, cacheReadPerM: 0.2 },
 };
