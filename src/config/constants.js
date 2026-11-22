@@ -12,7 +12,7 @@ export const PLANS = [
     highlights: [
       '50,000 tokens de IA al mes',
       'Simulador de WhatsApp para probar tu bot',
-      'Hasta 2 preguntas frecuentes',
+      'Hasta 5 preguntas frecuentes',
       'Datos del negocio: horario, ubicación y servicios',
       'Tono neutral',
       'Bandeja de Conversaciones (bot y manual)',
@@ -26,7 +26,7 @@ export const PLANS = [
     monthlyTokenLimit: 1_000_000,
     highlights: [
       '1,000,000 de tokens de IA al mes (20× más que Free)',
-      'Hasta 10 preguntas frecuentes',
+      'Hasta 20 preguntas frecuentes',
       'Tono personalizable: formal, cercano, técnico…',
       'Instrucciones de personalidad para tu bot',
       'Contexto ampliado: describe tu negocio a detalle',
@@ -138,8 +138,8 @@ export const CONVERSATION_RETENTION_DAYS = 30;
 // webWidget: chat del bot incrustable en el sitio web del negocio (Pro/Elite).
 // followUp: seguimiento automático a clientes que dejaron de responder (Pro/Elite).
 export const PLAN_LIMITS = {
-  free: { maxFaqs: 2, personality: false, tone: false, extraContext: false, maxImages: 0, documents: false, visionInput: false, management: false, multiUser: false, multiChannel: false, webWidget: false, followUp: false },
-  pro: { maxFaqs: 10, personality: true, tone: true, extraContext: true, maxImages: 0, documents: false, visionInput: false, management: false, multiUser: true, multiChannel: true, webWidget: true, followUp: true },
+  free: { maxFaqs: 5, personality: false, tone: false, extraContext: false, maxImages: 0, documents: false, visionInput: false, management: false, multiUser: false, multiChannel: false, webWidget: false, followUp: false },
+  pro: { maxFaqs: 20, personality: true, tone: true, extraContext: true, maxImages: 0, documents: false, visionInput: false, management: false, multiUser: true, multiChannel: true, webWidget: true, followUp: true },
   elite: { maxFaqs: null, personality: true, tone: true, extraContext: true, maxImages: 30, documents: true, visionInput: true, management: true, multiUser: true, multiChannel: true, webWidget: true, followUp: true },
 };
 

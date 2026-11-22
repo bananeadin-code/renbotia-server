@@ -37,7 +37,7 @@ if (passwordArg.length < 8) fail('La contraseña debe tener al menos 8 caractere
 
 const email = emailArg.trim().toLowerCase();
 
-// Negocio demo sencillo (despacho legal) con 2 FAQs (tope de Free) y datos base.
+// Negocio demo sencillo (despacho legal) con 2 FAQs (Free permite hasta 5) y datos base.
 const DEMO_BUSINESS = { name: 'Despacho Jurídico Demo', industry: 'legal' };
 const DEMO_BOTCONFIG = {
   botName: 'Asistente Legal',
