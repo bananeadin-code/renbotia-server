@@ -199,7 +199,7 @@ async function composeFollowUp({ config, business, chat, planKey }) {
   return { text, usage: { ...r, model } };
 }
 
-async function deliver({ business, chat, text }) {
+export async function deliver({ business, chat, text }) {
   if (chat.channel === 'whatsapp') {
     return sendText({ phoneNumberId: business.whatsappPhoneNumberId, to: chat.customerPhone, text });
   }

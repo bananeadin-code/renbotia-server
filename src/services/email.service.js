@@ -7,6 +7,7 @@ import { passwordResetEmail } from '../emails/passwordReset.js';
 import { welcomeEmail } from '../emails/welcome.js';
 import { escalationEmail } from '../emails/escalation.js';
 import { hotLeadEmail } from '../emails/hotLead.js';
+import { pendingLeadsEmail } from '../emails/pendingLeads.js';
 import { contactEmail } from '../emails/contact.js';
 import { weeklyReportEmail } from '../emails/weeklyReport.js';
 import { referralRewardEmail } from '../emails/referralReward.js';
@@ -197,6 +198,29 @@ export async function sendHotLeadEmail(p) {
     return await sendEmail({ to, subject, html });
   } catch (err) {
     logger.warn(`[email] No se pudo enviar el aviso de lead caliente: ${err.message}`);
+    return { ok: false, error: err.message };
+  }
+}
+
+/**
+ * Recordatorio de leads calientes y casos sin atender (leadFollowUp.service).
+ * Fail-open: si falla, se registra y no rompe nada.
+ * @param {object} p
+ * @param {string|import('mongoose').Types.ObjectId} p.userId
+ * @param {string} [p.businessName]
+ * @param {boolean} [p.digest]
+ * @param {Array} p.items
+ * @param {number} [p.more]
+ */
+export async function sendPendingLeadsEmail(p) {
+  try {
+    const user = p.userId ? await User.findById(p.userId).select('email name').lean() : null;
+    const to = p.to || user?.email;
+    if (!to) return { skipped: true };
+    const { subject, html } = pendingLeadsEmail({ ...p, customerName: user?.name });
+    return await sendEmail({ to, subject, html });
+  } catch (err) {
+    logger.warn(`[email] No se pudo enviar el recordatorio de leads: ${err.message}`);
     return { ok: false, error: err.message };
   }
 }

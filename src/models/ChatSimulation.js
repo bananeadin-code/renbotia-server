@@ -83,6 +83,13 @@ const chatSimulationSchema = new mongoose.Schema(
     hotLead: { type: Boolean, default: false },
     hotLeadReason: { type: String, default: '' },
     hotLeadAt: { type: Date, default: null },
+    // Cuándo el bot pidió atención humana (needsAttention), para los recordatorios.
+    attentionAt: { type: Date, default: null },
+    // Seguimiento de leads/casos sin atender (leadFollowUp.service): aviso extra
+    // al dueño y mensaje al cliente de que el equipo ya tiene su caso. Uno de cada
+    // uno por episodio (se reinician cuando el caso se vuelve a marcar).
+    ownerReminderAt: { type: Date, default: null },
+    handoffCheckInAt: { type: Date, default: null },
     // Último seguimiento automático enviado. Solo se manda uno por cada silencio
     // del cliente (se vuelve a permitir cuando el cliente escribe de nuevo).
     followUpAt: { type: Date, default: null },

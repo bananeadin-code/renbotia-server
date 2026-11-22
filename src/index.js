@@ -7,6 +7,7 @@ import { connectDB } from './config/db.js';
 import { env } from './config/env.js';
 import { logger } from './utils/logger.js';
 import { startFollowUpScheduler } from './services/followUp.service.js';
+import { startLeadFollowUpScheduler } from './services/leadFollowUp.service.js';
 import { startBackupScheduler } from './services/backup.service.js';
 import { startWeeklyReportScheduler } from './services/weeklyReport.service.js';
 import { startRenewalScheduler } from './services/renewal.service.js';
@@ -42,6 +43,8 @@ async function start() {
 
   // Seguimiento automático a clientes que dejaron de responder (Pro/Elite).
   startFollowUpScheduler();
+  // Leads y casos sin atender: recordatorio al dueño y aviso al cliente.
+  startLeadFollowUpScheduler();
   startReminderScheduler();
   startPaymentReconciler(); // pagos cobrados que no se entregaron
   // Respaldo cifrado por correo (gratis, mientras no haya backups de Atlas).

@@ -184,6 +184,8 @@ const businessSchema = new mongoose.Schema(
     // Reporte semanal del lunes (resultados, leads y pendientes por enseñar).
     weeklyReport: { type: Boolean, default: true },
     weeklyReportAt: { type: Date, default: null },
+    // Último resumen diario de leads/casos sin atender (leadFollowUp.service).
+    leadDigestAt: { type: Date, default: null },
     // Valores para estimar en pesos lo que genera el bot (los define el dueño).
     roi: {
       avgTicket: { type: Number, default: 0, min: 0 }, // venta/cita promedio en MXN

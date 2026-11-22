@@ -68,6 +68,36 @@ export function isOpenNow(schedule, now = new Date()) {
   return Boolean(prev.overnightTail && minutes < prev.close);
 }
 
+/**
+ * Próxima apertura del negocio (si ahora está cerrado), en su zona horaria.
+ * @returns {{ when: string, time: string } | null} p. ej. { when: 'mañana', time: '09:00' }
+ */
+export function nextOpening(schedule, now = new Date()) {
+  if (!schedule?.enabled || !Array.isArray(schedule.days)) return null;
+  const { day, minutes } = localNow(schedule.timezone, now);
+  for (let d = 0; d <= 7; d++) {
+    const dayIdx = (day + d) % 7;
+    const slot = schedule.days.find((s) => s.day === dayIdx && s.enabled);
+    const open = toMinutes(slot?.open);
+    if (open == null || (d === 0 && open <= minutes)) continue;
+    const when = d === 0 ? 'hoy' : d === 1 ? 'mañana' : `el ${DAY_NAMES[dayIdx]}`;
+    return { when, time: slot.open };
+  }
+  return null;
+}
+
+/**
+ * ¿Es buena hora para avisar (al dueño o al cliente)? Con horario configurado,
+ * solo si el negocio está abierto; sin horario, de 9:00 a 20:00 (hora del centro
+ * de México). Así nadie recibe recordatorios de madrugada.
+ */
+export function isGoodHourToNotify(schedule, now = new Date()) {
+  const open = isOpenNow(schedule, now);
+  if (open !== null) return open;
+  const { minutes } = localNow('America/Mexico_City', now);
+  return minutes >= 9 * 60 && minutes < 20 * 60;
+}
+
 /** Texto legible del horario, para que el bot lo comunique. */
 export function describeSchedule(schedule) {
   const days = (schedule?.days || []).filter((d) => d.enabled).sort((a, b) => a.day - b.day);
