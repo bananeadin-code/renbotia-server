@@ -2,27 +2,87 @@ import Anthropic from '@anthropic-ai/sdk';
 import { env } from '../config/env.js';
 import { ApiError } from '../utils/ApiError.js';
 import { logger } from '../utils/logger.js';
-import { WALLET_TOKEN_WEIGHTS, WALLET_DISCOUNT } from '../config/constants.js';
+import { WALLET_TOKEN_WEIGHTS, WALLET_DISCOUNT, MODEL_SETTINGS } from '../config/constants.js';
 
 // Un solo caché para configuración + entrenamiento. TTL de 1 hora para que el
 // bloque persista casi toda la sesión del cliente (se reconstruye solo cuando
 // edita su bot), maximizando las lecturas de caché (baratas) frente a reescrituras.
 const SYSTEM_CACHE_CONTROL = { type: 'ephemeral', ttl: '1h' };
+// Caché del HISTORIAL (TTL de 5 min): en una conversación activa, los mensajes
+// anteriores se vuelven a leer al 10% en vez de cobrarse completos, y en el loop
+// de herramientas cada ronda reutiliza la anterior. Va después del de 1 h (la API
+// exige que el TTL más largo vaya primero).
+const HISTORY_CACHE_CONTROL = { type: 'ephemeral' };
+const CACHEABLE_BLOCKS = new Set(['text', 'image', 'document', 'tool_result']);
+
+// Respuesta cuando el modelo declina o no alcanza a escribir texto.
+const REFUSAL_TEXT = 'Disculpa, no puedo ayudarte con eso por este medio. Si quieres, te comunico con una persona del equipo.';
 
 /**
  * Tokens que se DESCUENTAN al cliente (billetera), aprovechando el caché:
  * el config/entrenamiento reutilizado (cacheRead) casi no cuenta. No cambia el
  * costo real que se registra en UsageLog; solo abarata el consumo del cliente.
+ * `model` aplica el factor del tokenizador (ver MODEL_SETTINGS.walletFactor).
  */
-function computeBillable({ inputTokens = 0, cacheCreationTokens = 0, cacheReadTokens = 0, outputTokens = 0 }) {
+function computeBillable({ inputTokens = 0, cacheCreationTokens = 0, cacheReadTokens = 0, outputTokens = 0 }, model) {
   const w = WALLET_TOKEN_WEIGHTS;
   const weighted =
     inputTokens * w.input +
     cacheCreationTokens * w.cacheCreation +
     cacheReadTokens * w.cacheRead +
     outputTokens * w.output;
+  const factor = MODEL_SETTINGS[model]?.walletFactor ?? 1;
   // Descuento global adicional (el cliente consume ~15% menos).
-  return Math.round(weighted * WALLET_DISCOUNT);
+  return Math.round(weighted * WALLET_DISCOUNT * factor);
+}
+
+/** Parámetros propios del modelo: effort y espacio para el pensamiento. */
+function modelParams(model, maxTokens, { withTools = false } = {}) {
+  const s = MODEL_SETTINGS[model];
+  if (!s) return { max_tokens: maxTokens };
+  return {
+    max_tokens: maxTokens + s.outputHeadroom,
+    output_config: { effort: withTools ? s.toolEffort : s.effort },
+  };
+}
+
+/**
+ * Copia de `messages` con un punto de caché al final (no modifica el original,
+ * que es el historial guardado). Solo en bloques que aceptan cache_control.
+ */
+function withHistoryCache(messages) {
+  if (!messages.length) return messages;
+  const out = messages.slice(0, -1);
+  const last = messages[messages.length - 1];
+  if (typeof last.content === 'string') {
+    if (!last.content) return messages;
+    out.push({ ...last, content: [{ type: 'text', text: last.content, cache_control: HISTORY_CACHE_CONTROL }] });
+    return out;
+  }
+  if (!Array.isArray(last.content) || !last.content.length) return messages;
+  const blocks = [...last.content];
+  const tail = blocks[blocks.length - 1];
+  if (!CACHEABLE_BLOCKS.has(tail?.type)) return messages;
+  blocks[blocks.length - 1] = { ...tail, cache_control: HISTORY_CACHE_CONTROL };
+  out.push({ ...last, content: blocks });
+  return out;
+}
+
+/** Texto final de una respuesta (lee por tipo: puede empezar con bloques de pensamiento). */
+function replyText(response) {
+  const text = response.content
+    .filter((block) => block.type === 'text')
+    .map((block) => block.text)
+    .join('')
+    .trim();
+  if (text) return text;
+  // Declinó por seguridad, o el pensamiento agotó el tope antes de escribir.
+  if (response.stop_reason === 'refusal') {
+    logger.warn(`Claude declinó (${response.stop_details?.category || 'sin categoría'}).`);
+    return REFUSAL_TEXT;
+  }
+  if (response.stop_reason === 'max_tokens') logger.warn('Claude agotó max_tokens sin texto.');
+  return '';
 }
 
 /**
@@ -59,24 +119,22 @@ const MAX_OUTPUT_TOKENS = 500; // respuestas cortas estilo WhatsApp
 export async function generateReply({ system, messages, model, maxTokens }) {
   const anthropic = getClient();
 
+  const usedModel = model || env.anthropic.model;
   try {
     const response = await anthropic.messages.create({
-      model: model || env.anthropic.model,
+      model: usedModel,
       // maxTokens: tareas internas que devuelven más texto (p. ej. extraer un perfil en JSON).
-      max_tokens: maxTokens || MAX_OUTPUT_TOKENS,
+      ...modelParams(usedModel, maxTokens || MAX_OUTPUT_TOKENS),
       // Un solo caché de config+entrenamiento (system prompt), estable entre
       // mensajes. TTL 1h: persiste casi toda la sesión y se reconstruye solo al
-      // editar el bot. Si el prompt es corto (<1024 tokens) la API no cachea, sin error.
+      // editar el bot. Si el prompt es corto la API no cachea, sin error.
       system: [{ type: 'text', text: system, cache_control: SYSTEM_CACHE_CONTROL }],
-      messages,
+      // Conversaciones de varias vueltas: también se cachea el historial. En una
+      // sola petición (importar, extraer) no hay nada que reutilizar después.
+      messages: messages.length > 1 ? withHistoryCache(messages) : messages,
     });
 
-    // El contenido puede venir en varios bloques; concatenamos los de texto.
-    const text = response.content
-      .filter((block) => block.type === 'text')
-      .map((block) => block.text)
-      .join('')
-      .trim();
+    const text = replyText(response);
 
     const u = response.usage || {};
     const inputTokens = u.input_tokens ?? 0; // prompt no cacheado
@@ -97,7 +155,7 @@ export async function generateReply({ system, messages, model, maxTokens }) {
       // totalTokens = consumo REAL (para UsageLog/costo): todo el prompt + salida.
       totalTokens: inputTokens + cacheReadTokens + cacheCreationTokens + outputTokens,
       // billableTokens = lo que se DESCUENTA al cliente, con el caché abaratado.
-      billableTokens: computeBillable({ inputTokens, cacheCreationTokens, cacheReadTokens, outputTokens }),
+      billableTokens: computeBillable({ inputTokens, cacheCreationTokens, cacheReadTokens, outputTokens }, usedModel),
     };
   } catch (err) {
     logger.error(`Anthropic API error: ${err.status || ''} ${err.message}`);
@@ -155,22 +213,25 @@ export async function generateReplyWithTools({ system, messages, tools, executeT
     totalTokens: 0,
   };
   const toolCalls = [];
+  const usedModel = model || env.anthropic.model;
 
   try {
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       const response = await anthropic.messages.create({
-        model: model || env.anthropic.model,
-        max_tokens: MAX_OUTPUT_TOKENS,
+        model: usedModel,
+        ...modelParams(usedModel, MAX_OUTPUT_TOKENS, { withTools: true }),
         system: [{ type: 'text', text: system, cache_control: SYSTEM_CACHE_CONTROL }],
         tools,
-        messages: convo,
+        // Cada ronda reutiliza del caché lo enviado en la anterior.
+        messages: withHistoryCache(convo),
       });
 
       const u = usageFrom(response);
       for (const k of Object.keys(totals)) totals[k] += u[k];
 
       if (response.stop_reason === 'tool_use') {
-        // Guardamos el turno del asistente (incluye los bloques tool_use).
+        // Guardamos el turno del asistente TAL CUAL (tool_use y, en modelos 5.5,
+        // bloques de pensamiento: deben regresar sin cambios).
         convo.push({ role: 'assistant', content: response.content });
 
         // Ejecutamos cada herramienta pedida y armamos los tool_result.
@@ -190,20 +251,16 @@ export async function generateReplyWithTools({ system, messages, tools, executeT
       }
 
       // Respuesta final (texto).
-      const text = response.content
-        .filter((b) => b.type === 'text')
-        .map((b) => b.text)
-        .join('')
-        .trim();
+      const text = replyText(response);
 
-      return { text: text || '(sin respuesta)', ...totals, billableTokens: computeBillable(totals), toolCalls };
+      return { text: text || '(sin respuesta)', ...totals, billableTokens: computeBillable(totals, usedModel), toolCalls };
     }
 
     // Si se agotan las rondas, devolvemos un cierre razonable.
     return {
       text: 'Disculpa, tuve un problema procesando eso. ¿Puedes intentarlo de nuevo?',
       ...totals,
-      billableTokens: computeBillable(totals),
+      billableTokens: computeBillable(totals, usedModel),
       toolCalls,
     };
   } catch (err) {

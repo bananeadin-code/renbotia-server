@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { env } from '../config/env.js';
+import { MODEL_BY_PLAN } from '../config/constants.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -160,7 +161,8 @@ export async function semanticIssues(cfg = {}) {
 
   try {
     const res = await anthropic.messages.create({
-      model: env.anthropic.model,
+      // Haiku 5.5: acepta forzar la herramienta (Sonnet 5.5 no) y es el más barato.
+      model: MODEL_BY_PLAN.free,
       max_tokens: 500,
       system: VALIDATOR_SYSTEM,
       tools: [VALIDATION_TOOL],
