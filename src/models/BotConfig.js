@@ -73,6 +73,9 @@ const botConfigSchema = new mongoose.Schema(
     // Seguimiento automático (Pro/Elite): si el cliente deja de responder tras la
     // última respuesta del bot, se le escribe UNA vez dentro de la ventana de 24h.
     // mode 'ai' = el bot redacta según la conversación; 'custom' = texto fijo.
+    // Aviso fijo al cliente si su caso pasó a una persona y nadie lo atendió en
+    // ~4 h (leadFollowUp.service). Todos los planes; activado por defecto.
+    handoffCheckIn: { type: Boolean, default: true },
     followUp: {
       enabled: { type: Boolean, default: false },
       delayHours: { type: Number, default: 4, min: 1, max: 20 },

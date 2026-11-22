@@ -16,7 +16,7 @@ import { deliver } from './followUp.service.js';
  * 1) Al DUEÑO: un recordatorio por correo si el caso lleva ~2 h sin atender, y un
  *    resumen diario si hay casos de más de un día. Solo en buena hora (abierto
  *    según su horario o, sin horario, de 9 a 20 h).
- * 2) Al CLIENTE: un mensaje fijo (sin IA, sin costo de tokens) si a las ~4 h nadie
+ * 2) Al CLIENTE (si el negocio no lo apagó: BotConfig.handoffCheckIn): un mensaje fijo (sin IA, sin costo de tokens) si a las ~4 h nadie
  *    le ha escrito: "el equipo ya tiene tu caso", para que no se enfríe. Una vez
  *    por caso, dentro de la ventana de 24 h de Meta, en buena hora y no en modo
  *    manual (si una persona tomó el control, ella decide qué decir).
@@ -122,8 +122,9 @@ async function remindOwner({ business, cases, now }) {
 }
 
 /** Mensaje al cliente de que el equipo ya tiene su caso. Devuelve cuántos se enviaron. */
-async function checkInCustomers({ business, cases, now }) {
+async function checkInCustomers({ business, cases, now, enabled }) {
   let sent = 0;
+  if (!enabled) return 0; // el negocio lo apagó en Entrenamiento
   for (const { chat, age } of cases) {
     if (chat.handoffCheckInAt || age < CUSTOMER_CHECKIN_AFTER_MS) continue;
     if (!CHECKIN_CHANNELS.includes(chat.channel) || chat.handoffMode === 'manual') continue;
@@ -175,14 +176,14 @@ export async function runLeadFollowUps(now = Date.now()) {
     try {
       const [business, config] = await Promise.all([
         Business.findById(businessId).select('+facebookPageToken +instagramPageToken'),
-        BotConfig.findOne({ business: businessId }).select('schedule').lean(),
+        BotConfig.findOne({ business: businessId }).select('schedule handoffCheckIn').lean(),
       ]);
       if (!business) continue;
       if (!isGoodHourToNotify(config?.schedule, new Date(now))) continue;
       const cases = await pendingCases(businessId, now);
       if (!cases.length) continue;
       emails += await remindOwner({ business, cases, now });
-      checkIns += await checkInCustomers({ business, cases, now });
+      checkIns += await checkInCustomers({ business, cases, now, enabled: config?.handoffCheckIn !== false });
     } catch (err) {
       logger.warn(`Leads sin atender: negocio ${businessId}: ${err.message}`);
     }

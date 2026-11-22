@@ -90,6 +90,21 @@ describe('Leads sin atender', () => {
     assert.equal(r4.checkIns, 0);
   });
 
+  it('con el aviso al cliente apagado, solo recuerda al dueño', async () => {
+    const { BotConfig } = await import('../src/models/BotConfig.js');
+    const o = await makeOwner('LeadSinAviso');
+    await Business.updateOne({ _id: o.business._id }, { $set: { whatsappPhoneNumberId: 'PN-LEAD-5' } });
+    await BotConfig.updateOne({ business: o.business._id }, { $set: { handoffCheckIn: false } });
+    const chat = await hotLeadChat(o.business._id, { flaggedHoursAgo: 5, now: NOON });
+    const before = hits.length;
+    const r = await runLeadFollowUps(NOON);
+    assert.equal(r.checkIns, 0);
+    assert.equal(hits.length, before, 'no se le escribe al cliente');
+    const c = await ChatSimulation.findById(chat._id).lean();
+    assert.ok(c.ownerReminderAt, 'el dueño sí recibe su recordatorio');
+    assert.equal(c.handoffCheckInAt, null);
+  });
+
   it('no hace nada si alguien del equipo ya respondió', async () => {
     const o = await makeOwner('LeadAtendido');
     await Business.updateOne({ _id: o.business._id }, { $set: { whatsappPhoneNumberId: 'PN-LEAD-2' } });

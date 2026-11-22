@@ -72,6 +72,7 @@ export const updateBotConfigSchema = z.object({
       path: ['days'],
     })
     .optional(),
+  handoffCheckIn: z.boolean().optional(),
   followUp: z
     .object({
       enabled: z.boolean(),
