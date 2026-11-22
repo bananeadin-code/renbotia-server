@@ -42,7 +42,7 @@ const siteAssistantSchema = new mongoose.Schema(
       basePricing: {
         type: String,
         default:
-          'Free $0 (50,000 tokens, sin tarjeta) · Pro $479 MXN/mes (1,000,000 tokens) · Elite $999 MXN/mes (5,000,000 tokens + gestión de citas). También hay paquetes de créditos extra.',
+          'Free $0 (~10 conversaciones al mes, sin tarjeta) · Pro $479 MXN/mes (~200 conversaciones al mes) · Elite $999 MXN/mes (~1,000 conversaciones al mes + agenda de citas). También hay paquetes de créditos extra.',
       },
     },
     faqs: {
@@ -51,12 +51,12 @@ const siteAssistantSchema = new mongoose.Schema(
         {
           question: '¿Qué es RenBotIA?',
           answer:
-            'RenBotIA crea asistentes de WhatsApp con inteligencia artificial para tu negocio: responden dudas, agendan citas y captan clientes 24/7, entrenados con tu propia información.',
+            'RenBotIA crea asistentes de WhatsApp con inteligencia artificial para tu negocio: responden dudas y captan clientes 24/7, entrenados con tu propia información. En el plan Elite también agendan citas y toman pedidos.',
         },
         {
           question: '¿Cuánto cuesta?',
           answer:
-            'Hay un plan Free gratis con 50,000 tokens para probar sin tarjeta. Pro cuesta $479 MXN/mes (1 millón de tokens) y Elite $999 MXN/mes (5 millones + gestión de citas). También puedes comprar paquetes de créditos extra.',
+            'Hay un plan Free gratis para probar sin tarjeta (~10 conversaciones al mes y hasta 5 preguntas frecuentes). Pro cuesta $479 MXN/mes (~200 conversaciones y hasta 20 preguntas frecuentes) y Elite $999 MXN/mes (~1,000 conversaciones, preguntas ilimitadas y agenda de citas). También puedes comprar paquetes de créditos extra.',
         },
         {
           question: '¿Necesito saber programar?',

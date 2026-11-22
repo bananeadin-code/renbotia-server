@@ -1,4 +1,4 @@
-import { PLANS, ANNUAL } from '../config/constants.js';
+import { PLANS, ANNUAL, PLAN_LIMITS } from '../config/constants.js';
 import { env } from '../config/env.js';
 
 /**
@@ -226,6 +226,40 @@ const fmtLongDate = (d) =>
  * Texto del plan anual para el asistente del sitio (se arma al momento, así
  * cambia solo de "fundador" a precio normal cuando pasa la fecha).
  */
+// ~5,000 tokens por conversación (misma referencia que el panel: client/src/lib/usage.js).
+const TOKENS_PER_CONVERSATION = 5000;
+const approxConversations = (tokens) => Math.max(1, Math.round(tokens / TOKENS_PER_CONVERSATION)).toLocaleString('es-MX');
+
+/**
+ * Qué incluye cada plan, armado desde la configuración real (PLANS y
+ * PLAN_LIMITS) para que el asistente del sitio nunca cite límites viejos aunque
+ * sus textos en el panel no se hayan actualizado. Habla en conversaciones.
+ */
+export function planLimitsText() {
+  const parts = PLANS.map((p) => {
+    const l = PLAN_LIMITS[p.key] || {};
+    const price = p.priceMXN ? `${fmtMoney(p.priceMXN)} MXN/mes` : 'gratis, sin tarjeta';
+    const faqs = l.maxFaqs == null ? 'preguntas frecuentes ilimitadas' : `hasta ${l.maxFaqs} preguntas frecuentes`;
+    const extras = [];
+    if (l.tone) extras.push('tono personalizable');
+    if (l.multiUser) extras.push('equipo');
+    if (l.multiChannel) extras.push('varios canales a la vez');
+    if (l.webWidget) extras.push('chat para su sitio web');
+    if (l.followUp) extras.push('seguimiento automático');
+    if (l.management) extras.push('agenda de citas, reservaciones, pedidos y prospectos con disponibilidad real');
+    if (l.maxImages) extras.push(`envío de imágenes (hasta ${l.maxImages})`);
+    if (l.documents) extras.push('documentos de contexto');
+    const tail = extras.length ? `, ${extras.join(', ')}` : '';
+    return `${p.name} (${price}): ~${approxConversations(p.monthlyTokenLimit)} conversaciones al mes, ${faqs}${tail}.`;
+  });
+  return [
+    'Planes vigentes (estos datos mandan sobre cualquier otro texto):',
+    ...parts,
+    'Agendar citas, reservaciones y pedidos solo está en Elite; no lo ofrezcas en Free ni Pro.',
+    'Las conversaciones son aproximadas (dependen de lo largo de cada una); habla de conversaciones, no de tokens, salvo que pregunten.',
+  ].join(' ');
+}
+
 export function annualPricingText(now = new Date()) {
   const pro = annualInfo('pro', now);
   const elite = annualInfo('elite', now);

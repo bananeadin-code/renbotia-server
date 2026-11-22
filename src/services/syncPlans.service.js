@@ -48,10 +48,39 @@ export function rewritePlanPrices(text) {
   return out;
 }
 
+// Textos por defecto ANTERIORES (con tokens y "agendan citas" sin aclarar que es
+// Elite). Si el admin nunca los editó, se cambian por los defaults nuevos del
+// modelo; si los editó, se respetan (los límites vigentes igual le llegan al
+// asistente por planLimitsText()).
+const OLD_DEFAULTS = {
+  basePricing:
+    'Free $0 (50,000 tokens, sin tarjeta) · Pro $479 MXN/mes (1,000,000 tokens) · Elite $999 MXN/mes (5,000,000 tokens + gestión de citas). También hay paquetes de créditos extra.',
+  faqs: {
+    '¿Qué es RenBotIA?':
+      'RenBotIA crea asistentes de WhatsApp con inteligencia artificial para tu negocio: responden dudas, agendan citas y captan clientes 24/7, entrenados con tu propia información.',
+    '¿Cuánto cuesta?':
+      'Hay un plan Free gratis con 50,000 tokens para probar sin tarjeta. Pro cuesta $479 MXN/mes (1 millón de tokens) y Elite $999 MXN/mes (5 millones + gestión de citas). También puedes comprar paquetes de créditos extra.',
+  },
+};
+const sameText = (current, old) => current && rewritePlanPrices(current) === rewritePlanPrices(old);
+
 async function syncSiteAssistantPrices() {
   const doc = await SiteAssistant.findOne();
   if (!doc) return;
   let dirty = false;
+  const defaults = SiteAssistant.schema.path('faqs').defaultValue?.() || [];
+  if (sameText(doc.businessInfo?.basePricing, OLD_DEFAULTS.basePricing)) {
+    doc.businessInfo.basePricing = SiteAssistant.schema.path('businessInfo.basePricing').defaultValue;
+    dirty = true;
+  }
+  for (const f of doc.faqs || []) {
+    const old = OLD_DEFAULTS.faqs[f.question];
+    const fresh = defaults.find((d) => d.question === f.question);
+    if (old && fresh && sameText(f.answer, old)) {
+      f.answer = fresh.answer;
+      dirty = true;
+    }
+  }
   const base = doc.businessInfo?.basePricing;
   const nextBase = rewritePlanPrices(base);
   if (base && nextBase !== base) {
