@@ -122,7 +122,8 @@ export const listConversations = asyncHandler(async (req, res) => {
   if (simulator && chats.length) {
     const agg = await UsageLog.aggregate([
       { $match: { business: req.businessId, chat: { $in: chats.map((c) => c._id) } } },
-      { $group: { _id: '$chat', tokens: { $sum: '$totalTokens' } } },
+      // Lo descontado del plan (igual que la billetera); registros viejos: consumo real.
+      { $group: { _id: '$chat', tokens: { $sum: { $ifNull: ['$chargedTokens', '$totalTokens'] } } } },
     ]);
     tokensByChat = Object.fromEntries(agg.map((a) => [String(a._id), a.tokens]));
   }

@@ -275,6 +275,7 @@ async function runForBusiness(config) {
           cacheReadTokens: usage.cacheReadTokens,
           cacheCreationTokens: usage.cacheCreationTokens,
           totalTokens: usage.totalTokens,
+          chargedTokens: usage.billableTokens ?? usage.totalTokens,
           model: usage.model,
           source: 'followup',
         });

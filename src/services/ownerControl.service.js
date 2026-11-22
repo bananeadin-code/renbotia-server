@@ -833,6 +833,7 @@ export async function handleOwnerMessage({ business: base, waId, msg, phoneNumbe
     cacheReadTokens: result.cacheReadTokens,
     cacheCreationTokens: result.cacheCreationTokens,
     totalTokens: result.totalTokens,
+    chargedTokens: result.billableTokens ?? result.totalTokens,
     model,
     source: 'owner',
   });

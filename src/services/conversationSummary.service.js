@@ -60,6 +60,7 @@ export async function summarizeConversation({ businessId, chatId }) {
     cacheReadTokens: result.cacheReadTokens,
     cacheCreationTokens: result.cacheCreationTokens,
     totalTokens: result.totalTokens,
+    chargedTokens: toDeduct,
     model,
     source: 'summary',
   });

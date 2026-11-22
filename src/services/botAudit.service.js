@@ -214,6 +214,7 @@ export async function runBotAudit({ businessId, userId }) {
     cacheReadTokens: totals.cacheReadTokens || 0,
     cacheCreationTokens: totals.cacheCreationTokens || 0,
     totalTokens: totals.totalTokens || 0,
+    chargedTokens: billable,
     model,
     source: 'audit',
   });

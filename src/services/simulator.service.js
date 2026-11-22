@@ -451,6 +451,7 @@ export async function processMessage({
     cacheReadTokens,
     cacheCreationTokens,
     totalTokens,
+    chargedTokens: toDeduct,
     model,
     source,
     user: source === 'simulator' ? userId : null,

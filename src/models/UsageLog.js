@@ -18,6 +18,9 @@ const usageLogSchema = new mongoose.Schema(
     cacheReadTokens: { type: Number, default: 0 }, // servido desde caché (~0.1x)
     cacheCreationTokens: { type: Number, default: 0 }, // escrito a caché (~1.25x)
     totalTokens: { type: Number, default: 0 }, // input + caché + output (tokens lógicos)
+    // Lo que se descontó de la billetera del cliente (caché abaratado y descuento).
+    // Es lo que se le muestra; totalTokens es el consumo real para el costo.
+    chargedTokens: { type: Number, default: undefined },
     // Modelo de Claude que atendió la petición (para estimar el costo real por
     // modelo en admin, ya que cada plan corre en uno distinto: Haiku/Sonnet).
     model: { type: String, default: '' },

@@ -28,7 +28,8 @@ export const getUsageSummary = asyncHandler(async (req, res) => {
     {
       $group: {
         _id: { $dateToString: { format: '%Y-%m-%d', date: '$date' } },
-        totalTokens: { $sum: '$totalTokens' },
+        // Lo descontado del plan (coincide con la billetera); registros viejos: consumo real.
+        totalTokens: { $sum: { $ifNull: ['$chargedTokens', '$totalTokens'] } },
         inputTokens: { $sum: '$inputTokens' },
         outputTokens: { $sum: '$outputTokens' },
       },
@@ -145,7 +146,7 @@ export const getAnalytics = asyncHandler(async (req, res) => {
     }),
     UsageLog.aggregate([
       { $match: { business: businessId, source: 'simulator', date: { $gte: startOfMonth } } },
-      { $group: { _id: '$user', tokens: { $sum: '$totalTokens' }, messages: { $sum: 1 } } },
+      { $group: { _id: '$user', tokens: { $sum: { $ifNull: ['$chargedTokens', '$totalTokens'] } }, messages: { $sum: 1 } } },
       { $sort: { tokens: -1 } },
     ]),
     ChatSimulation.countDocuments({ business: businessId, channel: 'simulator', createdAt: { $gte: startOfMonth } }),
